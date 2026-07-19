@@ -271,22 +271,33 @@ actions/
 Every action: `getScope()` → `assertShop()` → validate → write → `audit()` → best-effort Telegram notify → `{ok} | {error}`.
 
 ## 7. New DB migrations (this dashboard's share)
-Numbering starts at **020** (pending backlog owns 010).
+**Reality correction**: every migration this dashboard needs is written and applied **in the backend
+repo's `migrations/` folder** (`new retail v2`), via that repo's own `scripts/apply_migration.py` and
+`mcp_servers/supabase_server.py` — not a separate file tree here. Numbering starts at **020** (backend
+owns 001–010; 011–019 sit unused as a buffer). Actual numbers assigned as work landed, not as
+originally planned (021 went to the AI-relay fix before invoices, since that was requested first):
 
 | Migration | Contents |
 |---|---|
 | `020_dashboard_users.sql` | auth mapping table (§3.2) |
-| `021_invoices.sql` | shops TRN fields + invoices table (§5.5) |
-| `022_counter_sales.sql` | POS table (§5.4) — becomes no-op if the paused backlog's counter_sales lands first |
+| `021_message_relay.sql` | `messages.relay_pending` — closes the Redis-relay gap (§8 below), not part of the original plan |
+| `022_pos_invoices.sql` | `products.barcode`, `counter_sales` void/dashboard-writer columns, `product_units` (IMEI ledger), `shops` TRN fields, `invoices` + `invoice_counters` + `next_invoice_number` RPC (§5.4/§5.5) |
 
 ## 8. Python backend changes (minimal; bots untouched)
-1. Bridge endpoints in `src/app/main.py`: escalations reply/handover, export orders/rider (~40 lines, each a thin wrapper over existing service functions) + `INTERNAL_API_TOKEN` in `config/settings.py`.
-2. Ops: `cloudflared tunnel` pointing at local FastAPI (documented; Task Scheduler entry).
+1. **AI-relay drain (done, migration 021)** — `escalations/context.py::sync_relay` pulls
+   `messages` rows this dashboard inserts with `relay_pending=true` into the AI's Redis session on
+   its next turn (`_replay` calls it before loading history). No bridge/endpoint needed — it runs
+   inside the existing orchestrator, so it's live the moment the backend process is running. This
+   **closes** the "dashboard actions invisible to the AI" gap that P2 originally shipped with.
+2. Bridge endpoints (P4, not yet built) in `src/app/main.py`: escalations reply/handover, export
+   orders/rider (~40 lines, each a thin wrapper over existing service functions) +
+   `INTERNAL_API_TOKEN` in `config/settings.py`.
+3. Ops: `cloudflared tunnel` pointing at local FastAPI (documented; Task Scheduler entry) — P4.
 
 ## 9. Build phases
-- ✅ **P0 (backend)**: `020_dashboard_users.sql` applied live (in the `new retail v2` backend repo); `scripts/seed_dashboard_users.py` provisions logins. *021/022 (POS/invoices) deferred to P3 — not needed until then.* Bridge endpoints + tunnel deferred to P4.
+- ✅ **P0 (backend)**: `020_dashboard_users.sql` applied live (in the `new retail v2` backend repo); `scripts/seed_dashboard_users.py` provisions logins. Bridge endpoints + tunnel deferred to P4.
 - ✅ **P1** (2026-07-19): scaffold, Supabase Auth, `lib/scope.ts` (tenant guard, verified live to 404 identically to the bots' `_own_shop` on a foreign shop/order/chat), read-only Home / Orders / Inventory / Chats / Riders & COD / Reports / Settings, dark mode pair, mobile bottom nav + More sheet. `lib/period.ts`/`lib/profit.ts` port `parse_period`/`profit_summary` from the Python backend byte-for-byte.
-- ✅ **P2** (2026-07-19): all mutations as server actions (`actions/orders.ts`, `products.ts`, `media.ts`, `riders.ts`, `settings.ts`) — each a line-by-line port of its Python service twin (same guards, same atomic `decrement_stock` RPC, same audit action codes `kconf`/`krej`/`kdup`/`kappr`/`kcust`/`kdeny`/`kasgr`/`krec`/`kneg`, `actor="dashboard:{email}"`). Telegram notifies via `lib/notify.ts` (direct Bot API calls, best-effort, archives to `messages`). Media upload via signed URL → Storage direct. **Live-verified**: draft created → confirmed (stock decremented, customer notified, audited) → packed → cancelled (stock restored, remarks recorded); negotiation toggled off→on (audited). **Known gap**: dashboard sends don't reach the backend's Redis AI session — only the durable `messages` archive — until the P4 bridge exists.
+- ✅ **P2** (2026-07-19): all mutations as server actions (`actions/orders.ts`, `products.ts`, `media.ts`, `riders.ts`, `settings.ts`) — each a line-by-line port of its Python service twin (same guards, same atomic `decrement_stock` RPC, same audit action codes `kconf`/`krej`/`kdup`/`kappr`/`kcust`/`kdeny`/`kasgr`/`krec`/`kneg`, `actor="dashboard:{email}"`). Telegram notifies via `lib/notify.ts` (direct Bot API calls, best-effort, archives to `messages`). Media upload via signed URL → Storage direct. **Live-verified**: draft created → confirmed (stock decremented, customer notified, audited) → packed → cancelled (stock restored, remarks recorded); negotiation toggled off→on (audited). *Gap closed same day (see migration 021 above): dashboard sends now reach the backend's Redis AI session via `sync_relay` — no bridge needed for this one.*
 - ✅ **P3** (2026-07-19): POS + Invoices + IMEI tracking, upgraded after market/regulation research (§5.4/§5.5). Backend migration `022_pos_invoices.sql` applied live (it DID reuse the existing `counter_sales`, exactly as the check above suspected). Live-verified: sale with compulsory IMEI (rejected without, accepted with, unit ledger linked), stock 6→5→6 across void, VAT 161.86 on a 3,399 sale (5/105 exact), per-shop sequential INV-000001/2, bilingual 80mm slip + A4 print, TRN settings, order→invoice creation, mobile + dark. **Deferred by user decision**: repair tickets & trade-ins (own phase later — niche-POS research says they matter, but they'd have tripled P3); ASP/Peppol e-invoicing (B2C excluded from the 2027 mandate); IMEI capture on online-order handover.
 - **P4**: owner role — shop switcher ✅ (built in P1, works today), Oversight views (cancellations/discounts/activity/cross-shop transcripts — not yet built), exports (bridge), escalation reply/handover (bridge). Bridge = ~12 endpoints on the backend's `src/app/main.py`, bearer-token secured, via Cloudflare Tunnel.
 - **P5**: mobile nav polish (mostly done in P1 — bottom nav + More sheet, dark mode, skeletons, 44px targets), empty/error/loading states (largely in place — `loading.tsx`/`error.tsx`/`not-found.tsx` + `EmptyState` used throughout), AED + Dubai-TZ sweep, dark-mode contrast re-audit.
