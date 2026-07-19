@@ -295,14 +295,14 @@ Numbering starts at **020** (pending backlog owns 010).
 2. Ops: `cloudflared tunnel` pointing at local FastAPI (documented; Task Scheduler entry).
 
 ## 9. Build phases
-- **P0 (backend)**: migrations 020–022 + bridge endpoints + tunnel.
-- **P1**: scaffold, auth, scope guard, read-only Home / Orders / Inventory / Chats / Reports (proves scoping + Dubai period math).
-- **P2**: all mutations — order lifecycle, price requests, product CRUD + media upload, riders/COD, negotiation. Audit + Telegram notifies wired.
-- **P3**: POS + Invoices.
-- **P4**: owner role — shop switcher, Oversight views, compare, exports (bridge), escalation reply/handover (bridge).
-- **P5**: mobile nav polish, empty/error/loading states everywhere, AED + Dubai-TZ sweep, dark mode audit.
+- ✅ **P0 (backend)**: `020_dashboard_users.sql` applied live (in the `new retail v2` backend repo); `scripts/seed_dashboard_users.py` provisions logins. *021/022 (POS/invoices) deferred to P3 — not needed until then.* Bridge endpoints + tunnel deferred to P4.
+- ✅ **P1** (2026-07-19): scaffold, Supabase Auth, `lib/scope.ts` (tenant guard, verified live to 404 identically to the bots' `_own_shop` on a foreign shop/order/chat), read-only Home / Orders / Inventory / Chats / Riders & COD / Reports / Settings, dark mode pair, mobile bottom nav + More sheet. `lib/period.ts`/`lib/profit.ts` port `parse_period`/`profit_summary` from the Python backend byte-for-byte.
+- ✅ **P2** (2026-07-19): all mutations as server actions (`actions/orders.ts`, `products.ts`, `media.ts`, `riders.ts`, `settings.ts`) — each a line-by-line port of its Python service twin (same guards, same atomic `decrement_stock` RPC, same audit action codes `kconf`/`krej`/`kdup`/`kappr`/`kcust`/`kdeny`/`kasgr`/`krec`/`kneg`, `actor="dashboard:{email}"`). Telegram notifies via `lib/notify.ts` (direct Bot API calls, best-effort, archives to `messages`). Media upload via signed URL → Storage direct. **Live-verified**: draft created → confirmed (stock decremented, customer notified, audited) → packed → cancelled (stock restored, remarks recorded); negotiation toggled off→on (audited). **Known gap**: dashboard sends don't reach the backend's Redis AI session — only the durable `messages` archive — until the P4 bridge exists.
+- **P3 (next)**: POS + Invoices. Add `021_invoices.sql`/`022_counter_sales.sql` *in this repo* when started (backend's own `counter_sales` table, migration 010, already exists for the vision-model flow — check whether P3 can reuse it before adding a second table with the same shape).
+- **P4**: owner role — shop switcher ✅ (built in P1, works today), Oversight views (cancellations/discounts/activity/cross-shop transcripts — not yet built), exports (bridge), escalation reply/handover (bridge). Bridge = ~12 endpoints on the backend's `src/app/main.py`, bearer-token secured, via Cloudflare Tunnel.
+- **P5**: mobile nav polish (mostly done in P1 — bottom nav + More sheet, dark mode, skeletons, 44px targets), empty/error/loading states (largely in place — `loading.tsx`/`error.tsx`/`not-found.tsx` + `EmptyState` used throughout), AED + Dubai-TZ sweep, dark-mode contrast re-audit.
 
-(Sequenced after Owner Console P1–P2 so logins can be provisioned.)
+(Sequenced after Owner Console P1–P2 so logins can be provisioned — in practice P0's `scripts/seed_dashboard_users.py` was enough to unblock P1/P2 testing without the Owner Console.)
 
 ## 10. Bot-parity checklists (tick each during verification)
 
