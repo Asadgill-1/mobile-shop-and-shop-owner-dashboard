@@ -30,16 +30,14 @@ export default async function ChatsPage() {
       .limit(500),
     db
       .from("pending_escalations")
-      .select("shop_id,phone")
+      .select("shop_id,phone,message,created_at")
       .in("shop_id", ids)
-      .is("resolved_at", null),
+      .is("resolved_at", null)
+      .order("created_at", { ascending: false }),
   ]);
 
-  const escalated = new Set(
-    ((escRes.data ?? []) as Pick<EscalationRow, "shop_id" | "phone">[]).map(
-      (e) => `${e.shop_id}:${e.phone}`,
-    ),
-  );
+  const openEscalations = (escRes.data ?? []) as Omit<EscalationRow, "id" | "resolved_at">[];
+  const escalated = new Set(openEscalations.map((e) => `${e.shop_id}:${e.phone}`));
 
   const seen = new Set<string>();
   const convs: Conversation[] = [];
@@ -56,6 +54,21 @@ export default async function ChatsPage() {
       escalated: escalated.has(key),
     });
     if (convs.length >= 30) break;
+  }
+  // An escalated customer with no archived messages must still appear —
+  // Home counts them, so Chats has to show them (escalations inbox, PLAN §5.6).
+  for (const e of openEscalations) {
+    const key = `${e.shop_id}:${e.phone}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    convs.push({
+      shopId: e.shop_id,
+      identity: e.phone,
+      preview: e.message,
+      role: "customer",
+      lastAt: e.created_at,
+      escalated: true,
+    });
   }
   // Customers waiting for a human float to the top.
   convs.sort((a, b) => Number(b.escalated) - Number(a.escalated));
