@@ -24,6 +24,8 @@ SUPABASE_URL=https://YOUR-PROJECT.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=...        # server only — never NEXT_PUBLIC
 NEXT_PUBLIC_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+TELEGRAM_RIDER_BOT_TOKEN=...         # rider assignment pushes (same token as backend)
+TELEGRAM_SHOPOWNER_BOT_TOKEN=...     # low-stock pings to shop owners
 ```
 
 ## Deploy (Vercel)
