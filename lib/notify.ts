@@ -3,9 +3,9 @@
 // escalations/context.remember: every send is BEST-EFFORT — a Telegram outage or a
 // failed archive insert must never fail the DB write it decorates (PLAN §3.5).
 //
-// Known gap until the bridge (P4): the AI's Redis working memory is on the local PC,
-// so dashboard-sent customer messages land in the permanent `messages` archive but
-// not in the AI's last-25 session. The bots' own sends do both.
+// AI awareness: this Redis-less repo can't touch the AI's session directly, so customer
+// sends are archived with relay_pending=true (migration 021); the backend's next AI turn
+// drains them into its Redis session (escalations/context.sync_relay). No bridge needed.
 import "server-only";
 import { db } from "./db";
 
@@ -55,7 +55,7 @@ export async function shopForNotify(shopId: string): Promise<ShopNotifyRow | nul
   return data as ShopNotifyRow | null;
 }
 
-/** Customer send + permanent archive row (Redis session is bridge territory, P4). */
+/** Customer send + archive row flagged for the backend's Redis-session drain (migration 021). */
 export async function notifyCustomer(
   shop: ShopNotifyRow,
   identity: string,
@@ -63,9 +63,13 @@ export async function notifyCustomer(
 ): Promise<boolean> {
   const sent = await sendTelegram(shop.telegram_customer_bot_token, identity, text);
   try {
-    await db
-      .from("messages")
-      .insert({ shop_id: shop.id, identity, role: "assistant", content: text });
+    await db.from("messages").insert({
+      shop_id: shop.id,
+      identity,
+      role: "assistant",
+      content: text,
+      relay_pending: true, // sync_relay pulls this into the AI's session on its next turn
+    });
   } catch {
     // archive is best-effort, like store.save_message
   }

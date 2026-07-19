@@ -35,7 +35,10 @@ export default async function NewOrderPage() {
     .order("brand");
   const products: ProductOption[] = (data ?? []).map((p) => ({
     id: p.id,
-    label: `${productCode(p.product_number)} · ${p.brand} ${p.model}${p.color ? ` ${p.color}` : ""} (${p.quantity} in stock) — ${aed(p.selling_price)}`,
+    code: productCode(p.product_number),
+    name: `${p.brand} ${p.model}${p.color ? ` ${p.color}` : ""}`,
+    qty: p.quantity,
+    price: aed(p.selling_price),
   }));
 
   return (

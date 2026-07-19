@@ -267,6 +267,9 @@ export async function createDraftOrder(
   const deliveryDate = String(formData.get("delivery_date") ?? "").trim() || null;
   const instructions = String(formData.get("special_instructions") ?? "").trim() || null;
 
+  if (!productId) {
+    return { ok: false, error: "Pick a product from the search list." };
+  }
   if (!customer || !phone || !address) {
     return { ok: false, error: "Customer name, phone and address are required." };
   }
