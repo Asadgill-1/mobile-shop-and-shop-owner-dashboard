@@ -1,11 +1,13 @@
 import Link from "next/link";
-import { HandCoins, Inbox, ReceiptText, Search } from "lucide-react";
+import { HandCoins, Inbox, Plus, ReceiptText, Search } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { fmtDubai } from "@/lib/period";
 import { aed, orderNet } from "@/lib/money";
 import type { OrderRow, PriceRequestRow } from "@/lib/types";
 import { Badge, Card, EmptyState, PageHeader, StatusPill } from "@/components/ui";
+import { ConfirmRejectButtons } from "@/components/order-actions";
+import { PriceActions } from "@/components/price-actions";
 
 const STATUSES = ["draft", "pending", "confirmed", "packed", "shipped", "delivered", "cancelled"] as const;
 
@@ -36,7 +38,15 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
 
   return (
     <>
-      <PageHeader title="Orders" sub={multiShop ? "All shops" : shopName.get(ids[0])} />
+      <PageHeader title="Orders" sub={multiShop ? "All shops" : shopName.get(ids[0])}>
+        <Link
+          href="/orders/new"
+          className="pressable inline-flex items-center gap-1.5 rounded-xl bg-accent text-accent-fg text-sm font-semibold px-4 py-2.5 min-h-11"
+        >
+          <Plus className="size-4" strokeWidth={2} aria-hidden />
+          New order
+        </Link>
+      </PageHeader>
 
       <div className="flex gap-2 overflow-x-auto -mx-4 px-4 lg:mx-0 lg:px-0">
         {tabs.map((t) => (
@@ -101,32 +111,30 @@ async function DraftsList({
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
       {drafts.map((o) => (
-        <Link key={o.id} href={`/orders/${o.id}`} className="pressable block">
-          <Card className="p-4 border-warning hover:border-accent flex flex-col gap-2">
-            <div className="flex items-center gap-2">
-              <p className="font-display font-semibold">#{o.order_number}</p>
-              <StatusPill status="draft" />
-              {multiShop ? <Badge tone="neutral">{shopName.get(o.shop_id)}</Badge> : null}
-              <span className="ml-auto text-xs text-subtle">{fmtDubai(o.created_at)}</span>
-            </div>
-            <p className="text-sm font-semibold">
-              {o.products?.brand} {o.products?.model}
-              {o.products?.color ? ` · ${o.products.color}` : ""} ×{o.quantity}
-            </p>
-            <p className="text-sm text-subtle truncate">
-              {o.customer_name} · {o.phone}
-            </p>
-            <div className="flex items-center gap-2">
-              <p className="font-display font-semibold tabular">{aed(orderNet(o))}</p>
-              {Number(o.discount_amount) > 0 ? (
-                <Badge tone="warning">−{aed(o.discount_amount)} discount</Badge>
-              ) : null}
-            </div>
-            <p className="text-xs text-subtle">
-              Confirm / reject from the keeper bot — dashboard actions arrive in Phase 2.
-            </p>
-          </Card>
-        </Link>
+        <Card key={o.id} className="p-4 border-warning flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Link href={`/orders/${o.id}`} className="pressable font-display font-semibold hover:text-accent-text">
+              #{o.order_number}
+            </Link>
+            <StatusPill status="draft" />
+            {multiShop ? <Badge tone="neutral">{shopName.get(o.shop_id)}</Badge> : null}
+            <span className="ml-auto text-xs text-subtle">{fmtDubai(o.created_at)}</span>
+          </div>
+          <p className="text-sm font-semibold">
+            {o.products?.brand} {o.products?.model}
+            {o.products?.color ? ` · ${o.products.color}` : ""} ×{o.quantity}
+          </p>
+          <p className="text-sm text-subtle truncate">
+            {o.customer_name} · {o.phone}
+          </p>
+          <div className="flex items-center gap-2 mb-1">
+            <p className="font-display font-semibold tabular">{aed(orderNet(o))}</p>
+            {Number(o.discount_amount) > 0 ? (
+              <Badge tone="warning">−{aed(o.discount_amount)} discount</Badge>
+            ) : null}
+          </div>
+          <ConfirmRejectButtons orderId={o.id} />
+        </Card>
       ))}
     </div>
   );
@@ -174,7 +182,7 @@ async function RequestsList({
             {r.products?.brand} {r.products?.model}
           </p>
           <p className="text-sm text-subtle">{r.phone}</p>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 mb-1">
             <div>
               <p className="text-xs text-subtle">Offer</p>
               <p className="font-display font-semibold tabular text-accent-text">{aed(r.requested_price)}</p>
@@ -184,9 +192,7 @@ async function RequestsList({
               <p className="font-display font-semibold tabular">{aed(r.products?.selling_price)}</p>
             </div>
           </div>
-          <p className="text-xs text-subtle">
-            Approve / counter / deny from the keeper bot — dashboard actions arrive in Phase 2.
-          </p>
+          <PriceActions requestNumber={r.request_number} />
         </Card>
       ))}
     </div>

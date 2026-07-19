@@ -16,6 +16,8 @@ import { fmtDubai } from "@/lib/period";
 import { aed, num, orderNet } from "@/lib/money";
 import type { OrderRow, StatusHistoryRow } from "@/lib/types";
 import { Badge, Card, PageHeader, SectionTitle, StatusPill } from "@/components/ui";
+import { DeliveryActions, type RiderOption } from "@/components/delivery-actions";
+import { ConfirmRejectButtons } from "@/components/order-actions";
 
 const custodyLabel = {
   none: null,
@@ -39,9 +41,22 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   if (!data) notFound();
   const order = data as unknown as OrderRow & { order_status_history: StatusHistoryRow[] };
 
-  const rider = order.rider_id
-    ? (await db.from("delivery_persons").select("name,phone").eq("id", order.rider_id).maybeSingle()).data
-    : null;
+  const [riderRes, shopRidersRes] = await Promise.all([
+    order.rider_id
+      ? db.from("delivery_persons").select("name,phone").eq("id", order.rider_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+    db
+      .from("delivery_persons")
+      .select("id,name,telegram_id")
+      .eq("shop_id", order.shop_id)
+      .order("created_at"),
+  ]);
+  const rider = riderRes.data;
+  const riderOptions: RiderOption[] = (shopRidersRes.data ?? []).map((r) => ({
+    id: r.id,
+    name: r.name,
+    linked: Boolean(r.telegram_id),
+  }));
 
   const history = [...(order.order_status_history ?? [])].sort(
     (a, b) => new Date(a.changed_at).getTime() - new Date(b.changed_at).getTime(),
@@ -116,6 +131,21 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         </Card>
 
         <div className="flex flex-col gap-4">
+          {order.status !== "delivered" && order.status !== "cancelled" ? (
+            <Card className="p-4 flex flex-col gap-3">
+              <SectionTitle>Actions</SectionTitle>
+              {order.status === "draft" ? (
+                <ConfirmRejectButtons orderId={order.id} />
+              ) : (
+                <DeliveryActions
+                  orderId={order.id}
+                  status={order.status}
+                  riders={riderOptions}
+                  currentRiderId={order.rider_id}
+                />
+              )}
+            </Card>
+          ) : null}
           <Card className="p-4 flex flex-col gap-3">
             <SectionTitle>Delivery</SectionTitle>
             {order.rider_id ? (

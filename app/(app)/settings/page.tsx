@@ -1,7 +1,8 @@
-import { CircleCheck, CircleSlash, Settings2, Store } from "lucide-react";
+import { Settings2, Store } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { Badge, Card, PageHeader, SectionTitle } from "@/components/ui";
+import { NegotiationToggle } from "@/components/negotiation-toggle";
 
 interface ShopSettingsRow {
   id: string;
@@ -42,20 +43,14 @@ export default async function SettingsPage() {
             </div>
             <div className="flex items-center gap-2 rounded-xl bg-muted px-3 py-2.5">
               <Settings2 className="size-4 text-subtle" strokeWidth={2} aria-hidden />
-              <p className="text-sm font-semibold flex-1">Price negotiation</p>
-              {s.negotiation_enabled ? (
-                <Badge tone="accent">
-                  <CircleCheck className="size-3.5" strokeWidth={2} aria-hidden /> On
-                </Badge>
-              ) : (
-                <Badge tone="neutral">
-                  <CircleSlash className="size-3.5" strokeWidth={2} aria-hidden /> Off
-                </Badge>
-              )}
+              <div className="flex-1">
+                <p className="text-sm font-semibold">Price negotiation</p>
+                <p className="text-xs text-subtle">
+                  Off = the AI holds at list price and never asks you to discount.
+                </p>
+              </div>
+              <NegotiationToggle shopId={s.id} enabled={s.negotiation_enabled} />
             </div>
-            <p className="text-xs text-subtle">
-              Toggle from the keeper bot (/negotiation on|off) — dashboard editing arrives in Phase 2.
-            </p>
           </Card>
         ))}
       </div>

@@ -5,6 +5,7 @@ import { fmtDubai } from "@/lib/period";
 import { aed, num } from "@/lib/money";
 import { riderCode, type CodLedgerRow, type RiderRow } from "@/lib/types";
 import { Badge, Card, EmptyState, PageHeader, SectionTitle, StatCard } from "@/components/ui";
+import { AddRiderForm, ReconcileForm } from "@/components/rider-forms";
 
 export default async function RidersPage() {
   const scope = await getScope();
@@ -37,7 +38,9 @@ export default async function RidersPage() {
 
   return (
     <>
-      <PageHeader title="Riders & COD" sub={`${riders.length} rider${riders.length === 1 ? "" : "s"}`} />
+      <PageHeader title="Riders & COD" sub={`${riders.length} rider${riders.length === 1 ? "" : "s"}`}>
+        <AddRiderForm shops={scope.shops} />
+      </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 max-w-md">
         <StatCard
@@ -89,15 +92,18 @@ export default async function RidersPage() {
                 <a href={`tel:${r.phone}`} className="text-sm text-subtle">
                   {r.phone}
                 </a>
-                <div className="mt-1 flex items-baseline gap-2">
-                  <p className="text-xs text-subtle">Holds</p>
-                  <p
-                    className={`font-display font-semibold tabular ${
-                      bal > 0 ? "text-warning-text" : "text-accent-text"
-                    }`}
-                  >
-                    {aed(bal)}
-                  </p>
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <div className="flex items-baseline gap-2">
+                    <p className="text-xs text-subtle">Holds</p>
+                    <p
+                      className={`font-display font-semibold tabular ${
+                        bal > 0 ? "text-warning-text" : "text-accent-text"
+                      }`}
+                    >
+                      {aed(bal)}
+                    </p>
+                  </div>
+                  <ReconcileForm riderId={r.id} riderName={r.name} />
                 </div>
               </Card>
             );

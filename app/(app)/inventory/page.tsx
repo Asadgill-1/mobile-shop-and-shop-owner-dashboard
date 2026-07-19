@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ImageOff, Package, Star, Video } from "lucide-react";
+import { ImageOff, Package, Plus, Star, Video } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { aed } from "@/lib/money";
@@ -55,7 +55,15 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       <PageHeader
         title="Inventory"
         sub={`${products.length} product${products.length === 1 ? "" : "s"} · ${units} unit${units === 1 ? "" : "s"} in stock`}
-      />
+      >
+        <Link
+          href="/inventory/new"
+          className="pressable inline-flex items-center gap-1.5 rounded-xl bg-accent text-accent-fg text-sm font-semibold px-4 py-2.5 min-h-11"
+        >
+          <Plus className="size-4" strokeWidth={2} aria-hidden />
+          Add product
+        </Link>
+      </PageHeader>
 
       <form className="flex flex-wrap gap-2" action="/inventory" method="get">
         {cat ? <input type="hidden" name="cat" value={cat} /> : null}
@@ -104,7 +112,8 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
             const img = p.images?.[0] ? thumb.get(p.images[0]) : undefined;
             const lowStock = isLowStock(p);
             return (
-              <Card key={p.id} className="overflow-hidden flex flex-col">
+              <Link key={p.id} href={`/inventory/${p.id}`} className="pressable block">
+                <Card className="overflow-hidden flex flex-col h-full hover:border-accent">
                 <div className="relative aspect-[4/3] bg-muted flex items-center justify-center">
                   {img ? (
                     // eslint-disable-next-line @next/next/no-img-element -- signed URLs expire; next/image caching would break them
@@ -163,8 +172,9 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                       {p.tags.length > 2 ? <Badge tone="neutral">+{p.tags.length - 2}</Badge> : null}
                     </div>
                   ) : null}
-                </div>
-              </Card>
+                  </div>
+                </Card>
+              </Link>
             );
           })}
         </div>

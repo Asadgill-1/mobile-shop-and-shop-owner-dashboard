@@ -1,0 +1,91 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
+import { db } from "@/lib/db";
+import { getScope } from "@/lib/scope";
+import { productCode, type ProductRow } from "@/lib/types";
+import { Badge, Card, PageHeader, SectionTitle } from "@/components/ui";
+import { ProductForm } from "@/components/product-form";
+import { ProductTools } from "@/components/product-tools";
+import { MediaManager, type MediaItem } from "@/components/media-manager";
+
+export default async function ProductEditPage({ params }: { params: Promise<{ id: string }> }) {
+  const [{ id }, scope] = await Promise.all([params, getScope()]);
+  if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
+
+  // Tenant guard in the query: foreign product == unknown product (404).
+  const { data } = await db
+    .from("products")
+    .select("*")
+    .eq("id", id)
+    .in("shop_id", scope.shopIds)
+    .maybeSingle();
+  if (!data) notFound();
+  const p = data as ProductRow;
+
+  const images: MediaItem[] = [];
+  if (p.images.length > 0) {
+    const { data: signed } = await db.storage.from("shop-media").createSignedUrls(p.images, 3600);
+    signed?.forEach((s, i) => {
+      if (s.signedUrl) images.push({ path: p.images[i], url: s.signedUrl });
+    });
+  }
+
+  return (
+    <>
+      <div className="flex items-center gap-3">
+        <Link
+          href="/inventory"
+          aria-label="Back to inventory"
+          className="pressable rounded-xl border border-border bg-surface p-2.5 min-w-11 min-h-11 flex items-center justify-center"
+        >
+          <ArrowLeft className="size-5" strokeWidth={2} aria-hidden />
+        </Link>
+        <PageHeader title={`${p.brand} ${p.model}`} sub={scope.shops.find((s) => s.id === p.shop_id)?.name}>
+          <Badge tone="neutral">{productCode(p.product_number)}</Badge>
+        </PageHeader>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <Card className="p-5 flex flex-col gap-4">
+          <SectionTitle>Details</SectionTitle>
+          <ProductForm
+            mode="edit"
+            defaults={{
+              id: p.id,
+              category: p.category,
+              brand: p.brand,
+              model: p.model,
+              color: p.color,
+              condition: p.condition,
+              specs: p.specs,
+              cost_price: p.cost_price,
+              selling_price: p.selling_price,
+              min_qty: p.min_qty,
+            }}
+          />
+        </Card>
+        <div className="flex flex-col gap-4">
+          <Card className="p-5 flex flex-col gap-4">
+            <SectionTitle>Photos & video</SectionTitle>
+            <MediaManager
+              productId={p.id}
+              images={images}
+              video={p.video_url ? { path: p.video_url } : null}
+            />
+          </Card>
+          <Card className="p-5 flex flex-col gap-4">
+            <SectionTitle>Stock, boost & tags</SectionTitle>
+            <ProductTools
+              productId={p.id}
+              boost={p.boost_level}
+              tags={p.tags}
+              featured={p.is_featured}
+              quantity={p.quantity}
+            />
+          </Card>
+        </div>
+      </div>
+    </>
+  );
+}
