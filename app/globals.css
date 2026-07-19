@@ -1,0 +1,239 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Design tokens — PLAN.md §2 (industrial slate + stock green)
+   merged with design-system/MASTER.md (block-based, dense 8pt).
+   Light + dark designed together; data-theme wins over system.
+   ============================================================ */
+:root {
+  --background: #f6f7f9;
+  --surface: #ffffff;
+  --foreground: #0f172a;
+  --subtle: #64748b;
+  --muted: #f1f5f9;
+  --border: #e2e8f0;
+
+  --primary: #334155;
+  --primary-fg: #ffffff;
+
+  --accent: #059669;
+  --accent-fg: #ffffff;
+  --accent-soft: #ecfdf5;
+  --accent-text: #047857;
+
+  --destructive: #dc2626;
+  --destructive-soft: #fef2f2;
+  --destructive-text: #b91c1c;
+
+  --warning: #d97706;
+  --warning-soft: #fffbeb;
+  --warning-text: #b45309;
+
+  --info: #2563eb;
+  --info-soft: #eff6ff;
+  --info-text: #1d4ed8;
+
+  --violet: #7c3aed;
+  --violet-soft: #f5f3ff;
+  --violet-text: #6d28d9;
+
+  --ring: #334155;
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0b1120;
+    --surface: #131c2e;
+    --foreground: #f1f5f9;
+    --subtle: #94a3b8;
+    --muted: #1a2438;
+    --border: #263349;
+
+    --primary: #e2e8f0;
+    --primary-fg: #0f172a;
+
+    --accent: #10b981;
+    --accent-fg: #052e1b;
+    --accent-soft: #0a2b21;
+    --accent-text: #34d399;
+
+    --destructive: #ef4444;
+    --destructive-soft: #331214;
+    --destructive-text: #f87171;
+
+    --warning: #f59e0b;
+    --warning-soft: #2e2008;
+    --warning-text: #fbbf24;
+
+    --info: #3b82f6;
+    --info-soft: #101f3d;
+    --info-text: #60a5fa;
+
+    --violet: #8b5cf6;
+    --violet-soft: #1e1636;
+    --violet-text: #a78bfa;
+
+    --ring: #94a3b8;
+    --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+  }
+}
+
+/* Explicit user choice (theme toggle) beats the system preference, both directions. */
+:root[data-theme="light"] {
+  --background: #f6f7f9;
+  --surface: #ffffff;
+  --foreground: #0f172a;
+  --subtle: #64748b;
+  --muted: #f1f5f9;
+  --border: #e2e8f0;
+  --primary: #334155;
+  --primary-fg: #ffffff;
+  --accent: #059669;
+  --accent-fg: #ffffff;
+  --accent-soft: #ecfdf5;
+  --accent-text: #047857;
+  --destructive: #dc2626;
+  --destructive-soft: #fef2f2;
+  --destructive-text: #b91c1c;
+  --warning: #d97706;
+  --warning-soft: #fffbeb;
+  --warning-text: #b45309;
+  --info: #2563eb;
+  --info-soft: #eff6ff;
+  --info-text: #1d4ed8;
+  --violet: #7c3aed;
+  --violet-soft: #f5f3ff;
+  --violet-text: #6d28d9;
+  --ring: #334155;
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.05);
+}
+
+:root[data-theme="dark"] {
+  --background: #0b1120;
+  --surface: #131c2e;
+  --foreground: #f1f5f9;
+  --subtle: #94a3b8;
+  --muted: #1a2438;
+  --border: #263349;
+  --primary: #e2e8f0;
+  --primary-fg: #0f172a;
+  --accent: #10b981;
+  --accent-fg: #052e1b;
+  --accent-soft: #0a2b21;
+  --accent-text: #34d399;
+  --destructive: #ef4444;
+  --destructive-soft: #331214;
+  --destructive-text: #f87171;
+  --warning: #f59e0b;
+  --warning-soft: #2e2008;
+  --warning-text: #fbbf24;
+  --info: #3b82f6;
+  --info-soft: #101f3d;
+  --info-text: #60a5fa;
+  --violet: #8b5cf6;
+  --violet-soft: #1e1636;
+  --violet-text: #a78bfa;
+  --ring: #94a3b8;
+  --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.4);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-subtle: var(--subtle);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-fg: var(--primary-fg);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-text: var(--accent-text);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-destructive-text: var(--destructive-text);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-text: var(--warning-text);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-info-text: var(--info-text);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
+  --color-violet-text: var(--violet-text);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-rubik), ui-sans-serif, system-ui, sans-serif;
+  --shadow-card: var(--shadow-card);
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  touch-action: manipulation;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-rubik), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Money / qty columns: figures that line up (PLAN §2). */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Press feedback: scale 0.97 over 150ms (PLAN §2). */
+.pressable {
+  transition: transform 150ms ease-out, background-color 200ms ease-out,
+    border-color 200ms ease-out, color 200ms ease-out, opacity 200ms ease-out;
+}
+.pressable:active {
+  transform: scale(0.97);
+}
+
+/* Signature "it worked" flash: stock-green border pulse, 400ms (PLAN §2). */
+@keyframes pulse-ok {
+  0% { box-shadow: 0 0 0 0 rgb(5 150 105 / 0.55); }
+  100% { box-shadow: 0 0 0 8px rgb(5 150 105 / 0); }
+}
+.flash-ok {
+  animation: pulse-ok 400ms ease-out 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pressable, .pressable:active { transform: none; transition: none; }
+  .flash-ok { animation: none; }
+  * { scroll-behavior: auto !important; }
+}
+
+/* Skeletons */
+@keyframes shimmer {
+  0% { opacity: 0.55; }
+  50% { opacity: 1; }
+  100% { opacity: 0.55; }
+}
+.skeleton {
+  background: var(--muted);
+  border-radius: 8px;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+/* Focus rings — keyboard visible everywhere. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
