@@ -22,6 +22,7 @@ export interface ProductDefaults {
   selling_price?: string;
   quantity?: number;
   min_qty?: number;
+  barcode?: string | null;
 }
 
 function Field({
@@ -122,7 +123,21 @@ export function ProductForm({
         <Field label="Low-stock alert at (0 = off)">
           <input name="min_qty" inputMode="numeric" defaultValue={defaults.min_qty ?? 0} className={`${inputCls} tabular`} />
         </Field>
+        <Field label="Barcode (optional — POS scan)">
+          <input name="barcode" defaultValue={defaults.barcode ?? ""} placeholder="EAN on the box" className={`${inputCls} tabular`} />
+        </Field>
       </div>
+
+      {mode === "create" ? (
+        <Field label="IMEIs / serials — one per line (phones & tablets)">
+          <textarea
+            name="imeis"
+            rows={3}
+            placeholder={"356789104829301\n356789104829302"}
+            className={`${inputCls} min-h-20 font-mono text-sm`}
+          />
+        </Field>
+      ) : null}
 
       <Field label="Specs — one per line, key: value">
         <textarea

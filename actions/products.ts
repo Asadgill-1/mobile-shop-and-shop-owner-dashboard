@@ -54,7 +54,23 @@ function productFields(formData: FormData): Record<string, unknown> {
     cost_price: String(cost),
     selling_price: String(sell),
     min_qty: parseQuantity(String(formData.get("min_qty") ?? "0")),
+    barcode: String(formData.get("barcode") ?? "").trim() || null,
   };
+}
+
+const IMEI_RE = /^[0-9A-Za-z-]{8,20}$/;
+
+/** "one per line" textarea → clean IMEI list. Throws on a malformed one. */
+function parseImeis(raw: string): string[] {
+  const list = raw
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  for (const imei of list) {
+    if (!IMEI_RE.test(imei)) throw new Error(`"${imei}" is not a valid IMEI/serial.`);
+  }
+  if (new Set(list).size !== list.length) throw new Error("Duplicate IMEI in the list.");
+  return list;
 }
 
 /** Mirror of create_product (+ initial quantity; the bot's 11-step /addproduct as one form). */
@@ -70,18 +86,76 @@ export async function createProduct(
   try {
     const fields = productFields(formData);
     const quantity = parseQuantity(String(formData.get("quantity") ?? "0"));
+    const imeis = parseImeis(String(formData.get("imeis") ?? ""));
     const { data, error } = await db
       .from("products")
       .insert({ ...fields, shop_id: shopId, quantity })
       .select("id,product_number")
       .single();
     if (error || !data) return { ok: false, error: "Could not save the product." };
+    if (imeis.length > 0) {
+      await db
+        .from("product_units")
+        .insert(imeis.map((imei) => ({ shop_id: shopId, product_id: data.id, imei })));
+    }
     await audit(email, "dash_product_new", shopId, { args: [data.product_number] });
     revalidatePath("/inventory");
     return { ok: true, message: "Product added." };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Invalid input." };
   }
+}
+
+/** Stock intake WITH IMEIs: units land in the ledger, quantity bumps by the same count. */
+export async function addUnits(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const { email, shopIds } = await actor();
+  const productId = String(formData.get("product_id") ?? "");
+  const product = await ownProduct(shopIds, productId);
+  if (!product) return { ok: false, error: "Product not found." };
+
+  let imeis: string[];
+  try {
+    imeis = parseImeis(String(formData.get("imeis") ?? ""));
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Invalid IMEI list." };
+  }
+  if (imeis.length === 0) return { ok: false, error: "Enter at least one IMEI." };
+
+  const { error } = await db
+    .from("product_units")
+    .insert(imeis.map((imei) => ({ shop_id: product.shop_id, product_id: product.id, imei })));
+  if (error) return { ok: false, error: "An IMEI in the list already exists in this shop." };
+
+  await db.rpc("decrement_stock", {
+    p_id: product.id,
+    p_shop: product.shop_id,
+    n: -imeis.length, // negative n restocks
+  });
+  await audit(email, "dash_stock_adj", product.shop_id, {
+    args: [product.product_number, imeis.length],
+  });
+  revalidatePath(`/inventory/${product.id}`);
+  revalidatePath("/inventory");
+  return { ok: true, message: `${imeis.length} unit(s) added to stock.` };
+}
+
+/** Fix a typo'd IMEI: only an in-stock unit can be removed; stock count is untouched
+ *  (the unit ledger is parallel — products.quantity stays the source of truth). */
+export async function deleteUnit(unitId: string): Promise<ActionResult> {
+  const { shopIds } = await actor();
+  const { data } = await db
+    .from("product_units")
+    .delete()
+    .eq("id", unitId)
+    .eq("status", "in_stock")
+    .in("shop_id", shopIds)
+    .select("id");
+  if (!data?.length) return { ok: false, error: "Unit not found or already sold." };
+  revalidatePath("/inventory");
+  return { ok: true, message: "IMEI removed." };
 }
 
 /** Full edit (PLAN §5.3 "exists (new surface)") — same validators as create. */

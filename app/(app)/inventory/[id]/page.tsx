@@ -8,6 +8,7 @@ import { Badge, Card, PageHeader, SectionTitle } from "@/components/ui";
 import { ProductForm } from "@/components/product-form";
 import { ProductTools } from "@/components/product-tools";
 import { MediaManager, type MediaItem } from "@/components/media-manager";
+import { UnitManager, type UnitItem } from "@/components/unit-manager";
 
 export default async function ProductEditPage({ params }: { params: Promise<{ id: string }> }) {
   const [{ id }, scope] = await Promise.all([params, getScope()]);
@@ -30,6 +31,17 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
       if (s.signedUrl) images.push({ path: p.images[i], url: s.signedUrl });
     });
   }
+
+  const { data: unitRows } = await db
+    .from("product_units")
+    .select("id,imei,status,sold_at")
+    .eq("product_id", p.id)
+    .eq("shop_id", p.shop_id)
+    .order("added_at");
+  const units = (unitRows ?? []) as UnitItem[];
+  const inStockUnits = units.filter((u) => u.status === "in_stock").length;
+  // quantity is authoritative; the ledger drifting from it is worth a glance, not an error
+  const unitMismatch = units.length > 0 && inStockUnits !== p.quantity;
 
   return (
     <>
@@ -62,6 +74,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               cost_price: p.cost_price,
               selling_price: p.selling_price,
               min_qty: p.min_qty,
+              barcode: p.barcode,
             }}
           />
         </Card>
@@ -83,6 +96,19 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               featured={p.is_featured}
               quantity={p.quantity}
             />
+          </Card>
+          <Card className="p-5 flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <SectionTitle>IMEI units</SectionTitle>
+              {unitMismatch ? (
+                <Badge tone="warning">
+                  {inStockUnits} IMEI ≠ {p.quantity} stock
+                </Badge>
+              ) : units.length > 0 ? (
+                <Badge tone="accent">{inStockUnits} in stock</Badge>
+              ) : null}
+            </div>
+            <UnitManager productId={p.id} units={units} />
           </Card>
         </div>
       </div>

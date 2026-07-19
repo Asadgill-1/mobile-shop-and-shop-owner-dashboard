@@ -57,6 +57,7 @@ export interface ProductRow {
   boost_level: number;
   tags: string[];
   is_featured: boolean;
+  barcode: string | null;
   created_at: string;
 }
 
@@ -112,12 +113,55 @@ export interface CounterSaleRow {
   id: string;
   shop_id: string;
   product_id: string;
+  /** Negative = void reversal row (migration 022); sums net out. */
   quantity: number;
   /** PER-UNIT price (unlike orders.selling_price which is the total). */
   sold_price: string;
   sold_on: string;
   discrepancy: boolean;
+  sold_by: string | null;
+  payment_method: "cash" | "card" | null;
   products?: ProductJoin | null;
+}
+
+export interface ProductUnitRow {
+  id: string;
+  shop_id: string;
+  product_id: string;
+  imei: string;
+  status: "in_stock" | "sold";
+  counter_sale_id: string | null;
+  order_id: string | null;
+  added_at: string;
+  sold_at: string | null;
+}
+
+export interface InvoiceItem {
+  desc: string;
+  qty: number;
+  unit_price: number;
+  line_total: number;
+  imeis?: string[];
+}
+
+export interface InvoiceRow {
+  id: string;
+  shop_id: string;
+  invoice_number: number;
+  source: "order" | "counter";
+  order_id: string | null;
+  counter_sale_ids: string[] | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  customer_address: string | null;
+  customer_trn: string | null;
+  items: InvoiceItem[];
+  subtotal: string;
+  vat_rate: string;
+  vat_amount: string;
+  total: string;
+  issued_at: string;
+  created_by: string;
 }
 
 export interface StatusHistoryRow {
@@ -134,6 +178,11 @@ export function productCode(n: number | null | undefined): string {
 /** "rider001" from delivery_persons.rider_number. */
 export function riderCode(n: number | null | undefined): string {
   return n ? `rider${String(n).padStart(3, "0")}` : "—";
+}
+
+/** "INV-000042" from invoices.invoice_number (per-shop sequence, migration 022). */
+export function invoiceCode(n: number | null | undefined): string {
+  return n ? `INV-${String(n).padStart(6, "0")}` : "—";
 }
 
 /** Low-stock rule, mirroring the bot: explicit threshold wins; else the ≤2 heuristic. */

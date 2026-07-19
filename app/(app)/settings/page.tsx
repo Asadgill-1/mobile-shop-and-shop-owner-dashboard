@@ -1,8 +1,9 @@
-import { Settings2, Store } from "lucide-react";
+import { FileText, Settings2, Store } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { Badge, Card, PageHeader, SectionTitle } from "@/components/ui";
 import { NegotiationToggle } from "@/components/negotiation-toggle";
+import { InvoiceIdentityForm } from "@/components/invoice-identity-form";
 
 interface ShopSettingsRow {
   id: string;
@@ -10,6 +11,9 @@ interface ShopSettingsRow {
   status: "active" | "suspended";
   whatsapp_number: string | null;
   negotiation_enabled: boolean;
+  trn: string | null;
+  invoice_name: string | null;
+  invoice_address: string | null;
 }
 
 export default async function SettingsPage() {
@@ -19,7 +23,7 @@ export default async function SettingsPage() {
   // Explicit column list: this table also carries bot tokens, which must never leave the server.
   const { data } = await db
     .from("shops")
-    .select("id,name,status,whatsapp_number,negotiation_enabled")
+    .select("id,name,status,whatsapp_number,negotiation_enabled,trn,invoice_name,invoice_address")
     .in("id", scope.shopIds)
     .order("created_at");
   const shops = (data ?? []) as ShopSettingsRow[];
@@ -51,6 +55,25 @@ export default async function SettingsPage() {
               </div>
               <NegotiationToggle shopId={s.id} enabled={s.negotiation_enabled} />
             </div>
+            <details className="rounded-xl bg-muted px-3 py-2.5" open={!s.trn}>
+              <summary className="flex items-center gap-2 cursor-pointer list-none">
+                <FileText className="size-4 text-subtle shrink-0" strokeWidth={2} aria-hidden />
+                <span className="text-sm font-semibold flex-1">Tax invoice details</span>
+                {s.trn ? (
+                  <Badge tone="accent">TRN set</Badge>
+                ) : (
+                  <Badge tone="warning">TRN missing</Badge>
+                )}
+              </summary>
+              <div className="pt-3">
+                <InvoiceIdentityForm
+                  shopId={s.id}
+                  trn={s.trn}
+                  name={s.invoice_name}
+                  address={s.invoice_address}
+                />
+              </div>
+            </details>
           </Card>
         ))}
       </div>

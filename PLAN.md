@@ -145,64 +145,53 @@ Active tab highlighted; badges (drafts, price requests, escalations) cleared aft
 | Delete product | blocked if any `orders.product_id` references it (clear error), else delete + storage cleanup | **NEW** (rule only, no schema) |
 | Product stats | honest empty state — "not tracked yet", same as bot `productstats_cmd` | exists (deliberately empty) |
 
-### 5.4 POS — counter sales (**NEW tab**)
-Full point-of-sale for walk-in counter sales. Table shape **aligned with the pending backlog's `counter_sales`** so the future photo-AI recording flow writes to the same table.
+### 5.4 POS — counter sales (✅ BUILT, P3 — live-verified 2026-07-19)
+**Reality correction**: `counter_sales` already existed (backend migration 010: `sold_price` PER UNIT,
+`sold_on` Dubai date, `recorded_by` telegram-id, `discrepancy`). POS **extends the real table** —
+backend migration **022** (021 was taken by the message relay):
 
-```sql
--- migration 022_counter_sales.sql
-create table counter_sales (
-  id uuid primary key default gen_random_uuid(),
-  shop_id uuid not null references shops(id) on delete cascade,
-  product_id uuid not null references products(id) on delete restrict,
-  quantity integer not null check (quantity != 0),   -- negative = void reversal
-  unit_price numeric(12,2) not null check (unit_price >= 0),
-  discount_amount numeric(12,2) not null default 0 check (discount_amount >= 0),
-  payment_method text not null check (payment_method in ('cash','card')),
-  customer_name text, customer_phone text,
-  sold_by text not null,                              -- dashboard:{email}
-  invoice_id uuid,                                    -- fk added in 021
-  created_at timestamptz not null default now()
-);
-create index idx_counter_sales_shop_day on counter_sales(shop_id, created_at desc);
-```
+- `quantity != 0` (was `> 0`): a void is a REVERSING negative row; `merge_counter`/`counter_totals`
+  are sums, so reversals net out with zero Python changes (backend test added).
+- `recorded_by default 0`, new `sold_by text` (`dashboard:{email}`), new `payment_method`
+  cash|card (bot photo-flow rows stay null).
+- `products.barcode` (nullable) for scan lookup.
+- **`product_units`**: light IMEI serialization — `unique(shop_id, imei)`, status in_stock|sold,
+  links `counter_sale_id`/`order_id`. `products.quantity` STAYS the stock source of truth; units
+  are a parallel warranty/anti-theft ledger (mismatch badge in inventory detail, display-only).
 
-| View / Action | Design |
+Built (`app/(app)/pos/page.tsx` + `components/pos-terminal.tsx`, `actions/pos.ts`):
+| Feature | Notes |
 |---|---|
-| Product search + cart | reads `products` (in-stock only); big touch targets; barcode-style fast search by brand/model |
-| Cart lines: qty, unit-price override, per-line discount | client state until checkout |
-| Checkout (cash / card) | per line: existing atomic `decrement_stock` RPC → insert `counter_sales` rows → audit row → optional auto-invoice (§5.5) |
-| Today's sales list | `counter_sales` Dubai-day |
-| Void sale | insert reversing row (negative qty) + restock via `decrement_stock` with negative n — never delete |
+| Search + camera scan | token search over code/name/barcode; native `BarcodeDetector` (progressive — button hides where unsupported); a scanned in-stock IMEI adds its product with the IMEI attached |
+| Cart | qty steppers capped at stock, unit-price override, per-line IMEI chips |
+| **IMEI compulsory** (user rule) | category Mobile/Tablet: IMEI count must equal qty — pick from stocked units or type (late capture inserts the unit as sold); duplicate/sold IMEIs rejected before any stock moves |
+| Checkout | per line atomic `decrement_stock` RPC (rollback on partial failure) → `counter_sales` rows → units marked sold → **auto tax invoice** (§5.5) → audits `dcsale`+`dinv` (humanized in backend `_HUMAN_ACTIONS`) → low-stock notify |
+| Today (Z-report-lite) | Dubai-day list, net cash/card totals, VOID badges |
+| Void | reversing negative row (`sold_by = "void:{id} …"` links it), restock, units back to stock, audit `dvoid`; invoice kept (append-only trail) |
 
-### 5.5 Invoices — UAE tax invoices (**NEW**)
-Covers both online orders and counter sales, per FTA requirements.
+IMEI intake: product create form (textarea), `addUnits` on the product page (bumps stock by the
+IMEI count), `deleteUnit` for in-stock typos only.
 
-```sql
--- migration 021_invoices.sql
-alter table shops add column trn text, add column invoice_name text, add column invoice_address text;
-create table invoices (
-  id uuid primary key default gen_random_uuid(),
-  shop_id uuid not null references shops(id) on delete cascade,
-  source text not null check (source in ('order','counter')),
-  order_id uuid references orders(id),
-  counter_sale_ids uuid[],
-  invoice_number bigint generated always as identity,
-  customer_name text, customer_phone text,
-  items jsonb not null,                 -- [{desc, qty, unit_price, line_total}]
-  subtotal numeric(12,2) not null,
-  vat_rate numeric(5,2) not null default 5,
-  vat_amount numeric(12,2) not null,
-  total numeric(12,2) not null,
-  issued_at timestamptz not null default now(),
-  created_by text not null
-);
-create unique index invoices_number_key on invoices(invoice_number);
-```
+### 5.5 Invoices — UAE tax invoices (✅ BUILT, P3 — live-verified 2026-07-19)
+Research (July 2026): Consumer Protection Law wants a dated **Arabic** invoice for every sale;
+FTA simplified tax invoice OK ≤ AED 10,000, full invoice (customer name+address) above; UAE
+e-invoicing mandate is B2B/B2G 2027 — **B2C excluded for now**, so no ASP/Peppol integration yet.
 
-- Retail prices are **VAT-inclusive** → `vat_amount = total × 5/105` (one tested util in `money.ts`).
-- Sequential numbering satisfied by the identity column; displayed `INV-000123`.
-- Rendering: HTML page `/invoices/[id]/print` with print stylesheet — "TAX INVOICE" header, shop `invoice_name` / `invoice_address` / **TRN**, invoice number, date, customer, line items, subtotal, VAT 5% breakout, AED total. Browser print / save-as-PDF. (No server PDF lib — add only if emailed invoices are ever needed.)
-- Views: invoice list (period filter), create-from-order (delivered orders), auto-create at POS checkout.
+Shipped schema (migration 022): `shops.trn/invoice_name/invoice_address`; `invoices` with
+**per-shop sequential numbering** via `invoice_counters` + `next_invoice_number(p_shop)` RPC
+(`unique(shop_id, invoice_number)` — a global identity would leak cross-tenant gaps), plus
+`customer_address`, `customer_trn` (B2B input-VAT recovery), items jsonb carries `imeis[]`.
+
+- VAT-inclusive retail: `vatFromInclusive` in `money.ts` computes `total × 5/105` in integer fils.
+- `> AED 10,000` checkout requires customer name + address (full-invoice branch, enforced server-side).
+- Rendering `/invoices/[id]/print` (route group `(print)` — no app chrome): **bilingual AR/EN**
+  ("TAX INVOICE فاتورة ضريبية", TRN رقم التسجيل الضريبي, RTL spans), **two paper formats** —
+  **80mm thermal slip** (POS default) and **A4** (`?format=`), auto `window.print()`, browser
+  print/save-PDF. Screen-only warning banner while the shop's TRN is missing.
+- Views: list (period chips + totals + VAT collected), detail, create-from-order for delivered
+  orders (careful: `orders.selling_price` is TOTAL gross; invoice total = selling − discount),
+  auto-create at POS checkout (DET: every sale gets a receipt).
+- Settings: per-shop TRN (15-digit check) / legal name / address form feeding the template.
 
 ### 5.6 Chats (Telegram now, WhatsApp at Stage 13 — same table)
 | View / Action | Backend reference | Status |
@@ -298,7 +287,7 @@ Numbering starts at **020** (pending backlog owns 010).
 - ✅ **P0 (backend)**: `020_dashboard_users.sql` applied live (in the `new retail v2` backend repo); `scripts/seed_dashboard_users.py` provisions logins. *021/022 (POS/invoices) deferred to P3 — not needed until then.* Bridge endpoints + tunnel deferred to P4.
 - ✅ **P1** (2026-07-19): scaffold, Supabase Auth, `lib/scope.ts` (tenant guard, verified live to 404 identically to the bots' `_own_shop` on a foreign shop/order/chat), read-only Home / Orders / Inventory / Chats / Riders & COD / Reports / Settings, dark mode pair, mobile bottom nav + More sheet. `lib/period.ts`/`lib/profit.ts` port `parse_period`/`profit_summary` from the Python backend byte-for-byte.
 - ✅ **P2** (2026-07-19): all mutations as server actions (`actions/orders.ts`, `products.ts`, `media.ts`, `riders.ts`, `settings.ts`) — each a line-by-line port of its Python service twin (same guards, same atomic `decrement_stock` RPC, same audit action codes `kconf`/`krej`/`kdup`/`kappr`/`kcust`/`kdeny`/`kasgr`/`krec`/`kneg`, `actor="dashboard:{email}"`). Telegram notifies via `lib/notify.ts` (direct Bot API calls, best-effort, archives to `messages`). Media upload via signed URL → Storage direct. **Live-verified**: draft created → confirmed (stock decremented, customer notified, audited) → packed → cancelled (stock restored, remarks recorded); negotiation toggled off→on (audited). **Known gap**: dashboard sends don't reach the backend's Redis AI session — only the durable `messages` archive — until the P4 bridge exists.
-- **P3 (next)**: POS + Invoices. Add `021_invoices.sql`/`022_counter_sales.sql` *in this repo* when started (backend's own `counter_sales` table, migration 010, already exists for the vision-model flow — check whether P3 can reuse it before adding a second table with the same shape).
+- ✅ **P3** (2026-07-19): POS + Invoices + IMEI tracking, upgraded after market/regulation research (§5.4/§5.5). Backend migration `022_pos_invoices.sql` applied live (it DID reuse the existing `counter_sales`, exactly as the check above suspected). Live-verified: sale with compulsory IMEI (rejected without, accepted with, unit ledger linked), stock 6→5→6 across void, VAT 161.86 on a 3,399 sale (5/105 exact), per-shop sequential INV-000001/2, bilingual 80mm slip + A4 print, TRN settings, order→invoice creation, mobile + dark. **Deferred by user decision**: repair tickets & trade-ins (own phase later — niche-POS research says they matter, but they'd have tripled P3); ASP/Peppol e-invoicing (B2C excluded from the 2027 mandate); IMEI capture on online-order handover.
 - **P4**: owner role — shop switcher ✅ (built in P1, works today), Oversight views (cancellations/discounts/activity/cross-shop transcripts — not yet built), exports (bridge), escalation reply/handover (bridge). Bridge = ~12 endpoints on the backend's `src/app/main.py`, bearer-token secured, via Cloudflare Tunnel.
 - **P5**: mobile nav polish (mostly done in P1 — bottom nav + More sheet, dark mode, skeletons, 44px targets), empty/error/loading states (largely in place — `loading.tsx`/`error.tsx`/`not-found.tsx` + `EmptyState` used throughout), AED + Dubai-TZ sweep, dark-mode contrast re-audit.
 
