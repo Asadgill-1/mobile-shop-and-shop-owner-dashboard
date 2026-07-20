@@ -9,10 +9,11 @@ import { Feedback } from "./action-feedback";
 export function ConfirmRejectButtons({ orderId }: { orderId: string }) {
   const [result, setResult] = useState<ActionResult | null>(null);
   const [rejecting, setRejecting] = useState(false);
+  const [fee, setFee] = useState("");
   const [pending, startTransition] = useTransition();
 
   const confirm = () =>
-    startTransition(async () => setResult(await confirmOrder(orderId)));
+    startTransition(async () => setResult(await confirmOrder(orderId, Number(fee) || 0)));
   const reject = (formData: FormData) =>
     startTransition(async () => setResult(await rejectOrder(orderId, formData)));
 
@@ -20,6 +21,22 @@ export function ConfirmRejectButtons({ orderId }: { orderId: string }) {
     <div className="flex flex-col gap-2">
       {!rejecting ? (
         <div className="flex gap-2">
+          <label className="relative shrink-0">
+            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-subtle pointer-events-none">
+              🛵
+            </span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="1"
+              value={fee}
+              onChange={(e) => setFee(e.target.value)}
+              placeholder="Delivery"
+              aria-label="Delivery fee (AED, blank = free)"
+              className="w-24 rounded-xl border border-border bg-background pl-7 pr-2 py-2 min-h-11 text-sm tabular"
+            />
+          </label>
           <button
             type="button"
             onClick={confirm}

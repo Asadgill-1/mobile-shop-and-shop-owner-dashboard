@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { fmtDubai, parsePeriod } from "@/lib/period";
 import { csvResponse, toCsv } from "@/lib/csv";
+import { orderRef } from "@/lib/types";
 import { audit } from "@/lib/audit";
 
 const STATUSES = ["draft", "pending", "confirmed", "packed", "shipped", "delivered", "cancelled"];
@@ -19,7 +20,7 @@ export async function GET(req: Request): Promise<Response> {
 
   let q = db
     .from("orders")
-    .select("shop_id,order_number,status,phone,address,quantity,selling_price,discount_amount,cod_amount,created_at,delivered_at, products(brand,model,color), delivery_persons(name)")
+    .select("shop_id,order_number,day_seq,status,phone,address,quantity,selling_price,discount_amount,delivery_fee,cod_amount,created_at,delivered_at, products(brand,model,color), delivery_persons(name)")
     .in("shop_id", ids)
     .gte("created_at", period.start.toISOString())
     .lt("created_at", period.end.toISOString())
@@ -29,21 +30,24 @@ export async function GET(req: Request): Promise<Response> {
   const { data } = await q;
 
   interface Row {
-    shop_id: string; order_number: number | null; status: string; phone: string; address: string;
-    quantity: number; selling_price: string; discount_amount: string; cod_amount: string | null;
+    shop_id: string; order_number: number | null; day_seq: number | null; status: string;
+    phone: string; address: string; quantity: number; selling_price: string;
+    discount_amount: string; delivery_fee: string | null; cod_amount: string | null;
     created_at: string; delivered_at: string | null;
     products: { brand: string; model: string; color: string | null } | null;
     delivery_persons: { name: string } | null;
   }
+  // "IMEI(s)" is intentionally blank — this doubles as the pick-&-pack sheet; the packer writes the
+  // shipped unit's IMEI in it, then enters it at invoice time (product_units flips sold).
   const csv = toCsv(
-    ["Order", "Created (Dubai)", "Status", "Shop", "Customer phone", "Address", "Product", "Qty", "Total AED", "Discount AED", "COD AED", "Rider", "Delivered (Dubai)"],
+    ["Order", "Created (Dubai)", "Status", "Shop", "Customer phone", "Address", "Product", "Qty", "IMEI(s)", "Total AED", "Discount AED", "Delivery AED", "COD AED", "Rider", "Delivered (Dubai)"],
     ((data ?? []) as unknown as Row[]).map((o) => {
       const p = o.products;
       const rider = o.delivery_persons;
       return [
-        o.order_number, fmtDubai(o.created_at), o.status, shopName.get(o.shop_id) ?? "",
+        orderRef(o.created_at, o.day_seq, o.order_number), fmtDubai(o.created_at), o.status, shopName.get(o.shop_id) ?? "",
         o.phone, o.address, `${p?.brand ?? ""} ${p?.model ?? ""}${p?.color ? ` ${p.color}` : ""}`.trim(),
-        o.quantity, o.selling_price, o.discount_amount, o.cod_amount ?? "",
+        o.quantity, "", o.selling_price, o.discount_amount, o.delivery_fee ?? "", o.cod_amount ?? "",
         rider?.name ?? "", o.delivered_at ? fmtDubai(o.delivered_at) : "",
       ];
     }),

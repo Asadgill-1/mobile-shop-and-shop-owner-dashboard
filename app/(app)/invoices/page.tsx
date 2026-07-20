@@ -5,7 +5,7 @@ import { getScope, scopedShopIds } from "@/lib/scope";
 import { parsePeriod } from "@/lib/period";
 import { fmtDubai } from "@/lib/period";
 import { aed2 } from "@/lib/money";
-import { invoiceCode, type InvoiceRow } from "@/lib/types";
+import { invoiceRef, orderRef, type InvoiceRow } from "@/lib/types";
 import { Badge, Card, EmptyState, PageHeader, SectionTitle, StatCard } from "@/components/ui";
 import { CreateInvoiceButton } from "@/components/create-invoice-button";
 
@@ -30,7 +30,7 @@ export default async function InvoicesPage({
   const [{ data: invRows }, { data: uninvoiced }] = await Promise.all([
     db
       .from("invoices")
-      .select("id,shop_id,invoice_number,source,customer_name,total,vat_amount,issued_at")
+      .select("id,shop_id,invoice_number,day_seq,source,customer_name,total,vat_amount,issued_at")
       .in("shop_id", ids)
       .gte("issued_at", period.start.toISOString())
       .lt("issued_at", period.end.toISOString())
@@ -38,7 +38,7 @@ export default async function InvoicesPage({
     // Delivered orders that never got an invoice yet — one tap creates it.
     db
       .from("orders")
-      .select("id,order_number,customer_name,selling_price,discount_amount,delivered_at,invoices(id)")
+      .select("id,order_number,day_seq,created_at,quantity,customer_name,selling_price,discount_amount,delivered_at, products(category), invoices(id)")
       .in("shop_id", ids)
       .eq("status", "delivered")
       .is("invoices", null)
@@ -48,7 +48,7 @@ export default async function InvoicesPage({
 
   const invoices = (invRows ?? []) as Pick<
     InvoiceRow,
-    "id" | "shop_id" | "invoice_number" | "source" | "customer_name" | "total" | "vat_amount" | "issued_at"
+    "id" | "shop_id" | "invoice_number" | "day_seq" | "source" | "customer_name" | "total" | "vat_amount" | "issued_at"
   >[];
   const totalSum = invoices.reduce((s, r) => s + Number(r.total), 0);
   const vatSum = invoices.reduce((s, r) => s + Number(r.vat_amount), 0);
@@ -112,7 +112,7 @@ export default async function InvoicesPage({
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-semibold tabular">
-                      {invoiceCode(inv.invoice_number)}
+                      {invoiceRef(inv.issued_at, inv.day_seq, inv.invoice_number)}
                       <span className="font-normal text-subtle"> · {inv.customer_name || "walk-in"}</span>
                     </p>
                     <p className="text-xs text-subtle">
@@ -143,14 +143,20 @@ export default async function InvoicesPage({
                 <li key={o.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold">
-                      #{o.order_number} · {o.customer_name}
+                      {orderRef(o.created_at, o.day_seq, o.order_number)} · {o.customer_name}
                     </p>
                     <p className="text-xs text-subtle">
                       delivered {fmtDubai(o.delivered_at)} ·{" "}
                       {aed2(Number(o.selling_price) - Number(o.discount_amount || 0))}
                     </p>
                   </div>
-                  <CreateInvoiceButton orderId={o.id} />
+                  <CreateInvoiceButton
+                    orderId={o.id}
+                    quantity={o.quantity}
+                    category={
+                      (Array.isArray(o.products) ? o.products[0] : o.products)?.category
+                    }
+                  />
                 </li>
               ))}
             </ul>

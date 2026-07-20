@@ -53,6 +53,8 @@ export interface ProfitSummary {
   vatCollected: number; // Σ invoices.vat_amount issued in the period
   cancels: { count: number; value: number };
   discountCount: number; // non-cancelled orders with a discount in the period
+  deliveryCollected: number; // Σ delivery_fee on non-cancelled orders (023)
+  deliveryKept: number; // portion riders kept (shops with rider_keeps_delivery)
 }
 
 interface OrderProfitRow {
@@ -61,6 +63,7 @@ interface OrderProfitRow {
   quantity: number;
   selling_price: string;
   discount_amount: string;
+  delivery_fee: string | null;
   products: { cost_price: string; brand: string; model: string; tags: string[] } | null;
 }
 
@@ -80,10 +83,10 @@ function lineProfit(sell: number, disc: number, costUnit: number, qty: number): 
 }
 
 export async function profitSummary(shopIds: string[], period: Period): Promise<ProfitSummary> {
-  const [ordersRes, counterRes, catalogueRes, vatRes, cancelsRes] = await Promise.all([
+  const [ordersRes, counterRes, catalogueRes, vatRes, cancelsRes, shopsRes] = await Promise.all([
     db
       .from("orders")
-      .select("shop_id,created_at,quantity,selling_price,discount_amount,products(cost_price,brand,model,tags)")
+      .select("shop_id,created_at,quantity,selling_price,discount_amount,delivery_fee,products(cost_price,brand,model,tags)")
       .in("shop_id", shopIds)
       .gte("created_at", period.start.toISOString())
       .lt("created_at", period.end.toISOString())
@@ -112,6 +115,7 @@ export async function profitSummary(shopIds: string[], period: Period): Promise<
       .eq("status", "cancelled")
       .gte("created_at", period.start.toISOString())
       .lt("created_at", period.end.toISOString()),
+    db.from("shops").select("id,rider_keeps_delivery").in("id", shopIds),
   ]);
 
   const orders = (ordersRes.data ?? []) as unknown as OrderProfitRow[];
@@ -121,7 +125,15 @@ export async function profitSummary(shopIds: string[], period: Period): Promise<
     (r) => !r.discrepancy,
   );
 
+  const keepsDelivery = new Map<string, boolean>(
+    ((shopsRes.data ?? []) as { id: string; rider_keeps_delivery: boolean }[]).map((s) => [
+      s.id,
+      s.rider_keeps_delivery,
+    ]),
+  );
+
   let revenue = 0, discounts = 0, cost = 0, profit = 0, clearance = 0, discountCount = 0;
+  let deliveryCollected = 0, deliveryKept = 0;
   const byProduct = new Map<string, ProfitLine>();
   const byDay = new Map<string, number>();
   const byShop = new Map<string, { orders: number; revenue: number; profit: number }>();
@@ -154,6 +166,12 @@ export async function profitSummary(shopIds: string[], period: Period): Promise<
     profit += pr;
     if (disc > 0) discountCount++;
     if ((p?.tags ?? []).includes("clearance")) clearance += pr;
+
+    const fee = num(o.delivery_fee);
+    if (fee > 0) {
+      deliveryCollected += fee;
+      if (keepsDelivery.get(o.shop_id)) deliveryKept += fee; // rider's earning, not shop income
+    }
 
     addProduct(`${p?.brand ?? "?"} ${p?.model ?? "?"}`.trim(), qty, sell - disc, pr);
     addShop(o.shop_id, sell, pr);
@@ -228,5 +246,7 @@ export async function profitSummary(shopIds: string[], period: Period): Promise<
       value: cancelRows.reduce((s, o) => s + num(o.selling_price), 0),
     },
     discountCount,
+    deliveryCollected,
+    deliveryKept,
   };
 }

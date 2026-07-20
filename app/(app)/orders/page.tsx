@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { fmtDubai } from "@/lib/period";
 import { aed, orderNet } from "@/lib/money";
-import type { OrderRow, PriceRequestRow } from "@/lib/types";
+import { orderRef, type OrderRow, type PriceRequestRow } from "@/lib/types";
 import { Badge, Card, EmptyState, PageHeader, StatusPill } from "@/components/ui";
 import { ConfirmRejectButtons } from "@/components/order-actions";
 import { PriceActions } from "@/components/price-actions";
@@ -122,7 +122,7 @@ async function DraftsList({
         <Card key={o.id} className="p-4 border-warning flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <Link href={`/orders/${o.id}`} className="pressable font-display font-semibold hover:text-accent-text">
-              #{o.order_number}
+              {orderRef(o.created_at, o.day_seq, o.order_number)}
             </Link>
             <StatusPill status="draft" />
             {multiShop ? <Badge tone="neutral">{shopName.get(o.shop_id)}</Badge> : null}
@@ -296,9 +296,9 @@ async function AllOrders({
               <li key={o.id}>
                 <Link
                   href={`/orders/${o.id}`}
-                  className="pressable grid grid-cols-[auto_1fr_auto] md:grid-cols-[72px_110px_1fr_auto_110px_auto] items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-muted"
+                  className="pressable grid grid-cols-[auto_1fr_auto] md:grid-cols-[112px_100px_1fr_auto_110px_auto] items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-muted"
                 >
-                  <p className="font-display font-semibold tabular">#{o.order_number}</p>
+                  <p className="font-display font-semibold tabular text-xs md:text-sm">{orderRef(o.created_at, o.day_seq, o.order_number)}</p>
                   <p className="hidden md:block text-sm text-subtle">{fmtDubai(o.created_at)}</p>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold truncate">

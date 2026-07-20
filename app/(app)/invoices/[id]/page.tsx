@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { fmtDubai } from "@/lib/period";
 import { aed2 } from "@/lib/money";
-import { invoiceCode, type InvoiceRow } from "@/lib/types";
+import { invoiceRef, type InvoiceRow } from "@/lib/types";
 import { Badge, Card, PageHeader, SectionTitle } from "@/components/ui";
 
 export default async function InvoicePage({ params }: { params: Promise<{ id: string }> }) {
@@ -33,7 +33,7 @@ export default async function InvoicePage({ params }: { params: Promise<{ id: st
         >
           <ArrowLeft className="size-5" strokeWidth={2} aria-hidden />
         </Link>
-        <PageHeader title={invoiceCode(inv.invoice_number)} sub={shop?.name}>
+        <PageHeader title={invoiceRef(inv.issued_at, inv.day_seq, inv.invoice_number)} sub={shop?.name}>
           <Badge tone={inv.source === "counter" ? "accent" : "info"}>
             {inv.source === "counter" ? "POS sale" : "Online order"}
           </Badge>

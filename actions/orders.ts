@@ -16,6 +16,8 @@ import {
   shopForNotify,
 } from "@/lib/notify";
 import { num } from "@/lib/money";
+import { orderRef } from "@/lib/types";
+import { computeOffer, type OfferRow } from "@/lib/offers";
 
 export type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
 
@@ -54,6 +56,9 @@ interface DraftRow {
   id: string;
   shop_id: string;
   order_number: number;
+  created_at: string;
+  day_seq: number | null;
+  delivery_fee: string | null;
   phone: string;
   address: string;
   quantity: number;
@@ -82,29 +87,110 @@ async function getOrder(
   return data as DraftRow | null;
 }
 
-/** Mirror of confirm_order: atomic decrement, → confirmed, tell the customer, low-stock ping. */
-export async function confirmOrder(orderId: string): Promise<ActionResult> {
+interface OfferOutcome {
+  discount: number;
+  fee: number;
+  freeDelivery: boolean;
+  giftText: string | null;
+  snapshot: Record<string, unknown> | null;
+}
+
+/** Load the product's active offer and turn it into the effects to persist on confirm:
+ *  auto-discount (best of existing vs offer), zeroed delivery, and a stock-decremented free gift
+ *  snapshotted for the invoice. Best-effort on the gift (out of stock → skip, never block confirm). */
+async function applyOfferAtConfirm(draft: DraftRow, fee: number): Promise<OfferOutcome> {
+  const base: OfferOutcome = {
+    discount: num(draft.discount_amount),
+    fee,
+    freeDelivery: false,
+    giftText: null,
+    snapshot: null,
+  };
+  const { data: offer } = await db
+    .from("offers")
+    .select("*")
+    .eq("product_id", draft.product_id)
+    .eq("active", true)
+    .maybeSingle();
+  if (!offer) return base;
+
+  const unitPrice = draft.quantity > 0 ? num(draft.selling_price) / draft.quantity : 0;
+  const eff = computeOffer(offer as OfferRow, unitPrice, draft.quantity);
+  const snapshot: Record<string, unknown> = { type: offer.type, label: offer.label };
+  let giftText: string | null = null;
+
+  if (eff.giftProductId) {
+    // decrement the gift's stock; skip the gift if it's out of stock (confirm still succeeds)
+    const ok = await decrementStock(draft.shop_id, eff.giftProductId, 1);
+    if (ok) {
+      const { data: g } = await db
+        .from("products")
+        .select("brand,model")
+        .eq("id", eff.giftProductId)
+        .maybeSingle();
+      const giftName = `${g?.brand ?? ""} ${g?.model ?? ""}`.trim() || "gift";
+      giftText = `Free ${giftName}`;
+      snapshot.gift_product_id = eff.giftProductId;
+      snapshot.gift_name = giftName;
+    }
+  }
+  const discount = Math.max(base.discount, eff.discount);
+  if (discount > base.discount) snapshot.discount = discount;
+  if (eff.freeDelivery) snapshot.free_delivery = true;
+
+  return {
+    discount,
+    fee: eff.freeDelivery ? 0 : fee,
+    freeDelivery: eff.freeDelivery,
+    giftText,
+    snapshot,
+  };
+}
+
+/** Mirror of confirm_order: atomic decrement, → confirmed, tell the customer, low-stock ping.
+ *  Optional home-delivery fee (023) — the customer gets a price breakdown. */
+export async function confirmOrder(orderId: string, deliveryFee = 0): Promise<ActionResult> {
   const { email, shopIds } = await actor();
   const draft = await getOrder(shopIds, orderId, "draft");
   if (!draft) return { ok: false, error: "This draft was already decided or doesn't exist." };
+  const fee = Number.isFinite(deliveryFee) && deliveryFee > 0 ? deliveryFee : 0;
 
   if (!(await decrementStock(draft.shop_id, draft.product_id, draft.quantity))) {
     return { ok: false, error: "Out of stock — it sold out between draft and confirm." };
   }
   await setStatus(draft.id, "confirmed", email);
 
+  // Active offer (023): auto-discount / free delivery / free gift, applied at confirm so the
+  // customer's confirmation and the eventual invoice both reflect it.
+  const applied = await applyOfferAtConfirm(draft, fee);
+  const effDiscount = applied.discount;
+  const effFee = applied.fee;
+  await db
+    .from("orders")
+    .update({
+      delivery_fee: String(effFee),
+      discount_amount: String(effDiscount),
+      applied_offer: applied.snapshot,
+    })
+    .eq("id", draft.id);
+
   const shop = await shopForNotify(draft.shop_id);
-  const net = num(draft.selling_price) - num(draft.discount_amount);
+  const itemNet = num(draft.selling_price) - effDiscount;
+  const total = itemNet + effFee;
   const name =
     `${draft.products?.brand ?? ""} ${draft.products?.model ?? ""}`.trim() || "your order";
+  const ref = orderRef(draft.created_at, draft.day_seq);
   if (shop) {
     await notifyCustomer(
       shop,
       draft.phone,
-      `✅ Order #${draft.order_number} confirmed!\n` +
-        `${draft.quantity}× ${name} — ${net} AED\n` +
-        `Deliver to: ${draft.address}` +
-        (draft.delivery_date ? `\nDelivery: ${draft.delivery_date}` : "") +
+      `✅ Order ${ref} confirmed!\n` +
+        `${draft.quantity}× ${name} — ${itemNet} AED` +
+        (applied.giftText ? `\n🎁 ${applied.giftText}` : "") +
+        (applied.freeDelivery ? `\nDelivery — FREE` : effFee > 0 ? `\nDelivery — ${effFee} AED` : "") +
+        (effFee > 0 || applied.freeDelivery ? `\nTotal — ${total} AED` : "") +
+        `\nDeliver to: ${draft.address}` +
+        (draft.delivery_date ? `\nDelivery date: ${draft.delivery_date}` : "") +
         `\nThank you! 🙏`,
     );
     await notifyLowStock(shop, draft.product_id);
@@ -113,7 +199,7 @@ export async function confirmOrder(orderId: string): Promise<ActionResult> {
   revalidatePath("/orders");
   revalidatePath(`/orders/${draft.id}`);
   revalidatePath("/");
-  return { ok: true, message: `Order #${draft.order_number} confirmed — customer notified.` };
+  return { ok: true, message: `Order ${ref} confirmed — customer notified.` };
 }
 
 /** Mirror of reject_order: → cancelled, reason lands in history.changed_by (owner report reads it).
@@ -168,7 +254,10 @@ export async function assignDelivery(orderId: string, formData: FormData): Promi
     .maybeSingle();
   if (!rider) return { ok: false, error: "Rider not found." };
 
-  const cod = num(order.selling_price) - num(order.discount_amount);
+  // COD = net product charge + delivery fee (rider collects the full amount). Rider-keeps split,
+  // if the shop enables it, is settled at deliver/reconcile — not here (mirror assign_delivery).
+  const fee = num(order.delivery_fee);
+  const cod = num(order.selling_price) - num(order.discount_amount) + fee;
   await db
     .from("orders")
     .update({ rider_id: rider.id, cod_amount: String(cod), custody: "offered" })
@@ -198,6 +287,7 @@ export async function assignDelivery(orderId: string, formData: FormData): Promi
         (order.delivery_date ? `\nWhen: ${order.delivery_date}` : "") +
         (order.special_instructions ? `\nNote: ${order.special_instructions}` : "") +
         `\n\n💵 Collect (COD): ${cod} AED` +
+        (fee > 0 ? ` (incl. ${fee} AED delivery)` : "") +
         `\n📊 Cash you already hold: ${outstanding} AED` +
         `\n\nTap below — or /accept ${order.order_number} / /notreceived ${order.order_number}`,
       {

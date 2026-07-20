@@ -10,7 +10,7 @@ import { audit } from "@/lib/audit";
 import { notifyLowStock, shopForNotify } from "@/lib/notify";
 import { dubaiDateISO } from "@/lib/period";
 import { vatFromInclusive } from "@/lib/money";
-import { productCode, type InvoiceItem } from "@/lib/types";
+import { invoiceRef, productCode, type InvoiceItem } from "@/lib/types";
 import type { ActionResult } from "./orders";
 
 /** FTA: above this a full tax invoice (customer name + address) is required. */
@@ -194,11 +194,17 @@ export async function checkoutSale(input: CheckoutInput): Promise<CheckoutResult
   });
   const vat = vatFromInclusive(total);
   const { data: invNo } = await db.rpc("next_invoice_number", { p_shop: shopId });
+  const { data: daySeq } = await db.rpc("next_day_seq", {
+    p_shop: shopId,
+    p_kind: "invoice",
+    p_day: dubaiDateISO(),
+  });
   const { data: invoice } = await db
     .from("invoices")
     .insert({
       shop_id: shopId,
       invoice_number: invNo,
+      day_seq: daySeq ?? null,
       source: "counter",
       counter_sale_ids: sales.map((s) => s.id),
       customer_name: customerName,
@@ -211,13 +217,15 @@ export async function checkoutSale(input: CheckoutInput): Promise<CheckoutResult
       total: total.toFixed(2),
       created_by: email,
     })
-    .select("id,invoice_number")
+    .select("id,invoice_number,day_seq,issued_at")
     .single();
 
   const itemCount = input.lines.reduce((s, l) => s + l.quantity, 0);
   await audit(email, "dcsale", shopId, { args: [itemCount] });
+  let invRef = "";
   if (invoice) {
-    await audit(email, "dinv", shopId, { args: [String(invoice.invoice_number).padStart(6, "0")] });
+    invRef = invoiceRef(invoice.issued_at, invoice.day_seq, invoice.invoice_number);
+    await audit(email, "dinv", shopId, { args: [invRef.replace(/^INV-/, "")] });
   }
   const shop = await shopForNotify(shopId);
   if (shop) for (const d of decremented) await notifyLowStock(shop, d.product_id);
@@ -227,7 +235,7 @@ export async function checkoutSale(input: CheckoutInput): Promise<CheckoutResult
   revalidatePath("/invoices");
   return {
     ok: true,
-    message: invoice ? `Sale recorded — invoice INV-${String(invoice.invoice_number).padStart(6, "0")}.` : "Sale recorded.",
+    message: invoice ? `Sale recorded — invoice ${invRef}.` : "Sale recorded.",
     invoiceId: invoice?.id,
   };
 }

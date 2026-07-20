@@ -9,6 +9,7 @@ import { ProductForm } from "@/components/product-form";
 import { ProductTools } from "@/components/product-tools";
 import { MediaManager, type MediaItem } from "@/components/media-manager";
 import { UnitManager, type UnitItem } from "@/components/unit-manager";
+import { OfferManager, type ActiveOffer, type GiftOption } from "@/components/offer-manager";
 
 export default async function ProductEditPage({ params }: { params: Promise<{ id: string }> }) {
   const [{ id }, scope] = await Promise.all([params, getScope()]);
@@ -42,6 +43,27 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
   const inStockUnits = units.filter((u) => u.status === "in_stock").length;
   // quantity is authoritative; the ledger drifting from it is worth a glance, not an error
   const unitMismatch = units.length > 0 && inStockUnits !== p.quantity;
+
+  // Offers (023): the active one, plus this shop's other products as free-gift candidates.
+  const [{ data: offerRow }, { data: giftRows }] = await Promise.all([
+    db
+      .from("offers")
+      .select("id,type,label,value")
+      .eq("product_id", p.id)
+      .eq("active", true)
+      .maybeSingle(),
+    db
+      .from("products")
+      .select("id,product_number,brand,model")
+      .eq("shop_id", p.shop_id)
+      .neq("id", p.id)
+      .order("brand"),
+  ]);
+  const offer = (offerRow ?? null) as ActiveOffer | null;
+  const giftOptions: GiftOption[] = (giftRows ?? []).map((g) => ({
+    id: g.id,
+    label: `${productCode(g.product_number)} · ${g.brand} ${g.model}`,
+  }));
 
   return (
     <>
@@ -109,6 +131,10 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
               ) : null}
             </div>
             <UnitManager productId={p.id} units={units} />
+          </Card>
+          <Card className="p-5 flex flex-col gap-4">
+            <SectionTitle>Offer</SectionTitle>
+            <OfferManager productId={p.id} offer={offer} giftOptions={giftOptions} />
           </Card>
         </div>
       </div>

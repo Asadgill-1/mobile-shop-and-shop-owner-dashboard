@@ -1,8 +1,9 @@
-import { FileText, Settings2, Store } from "lucide-react";
+import { Bike, FileText, Settings2, Store } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { Badge, Card, PageHeader, SectionTitle } from "@/components/ui";
 import { NegotiationToggle } from "@/components/negotiation-toggle";
+import { RiderDeliveryToggle } from "@/components/rider-delivery-toggle";
 import { InvoiceIdentityForm } from "@/components/invoice-identity-form";
 
 interface ShopSettingsRow {
@@ -11,6 +12,7 @@ interface ShopSettingsRow {
   status: "active" | "suspended";
   whatsapp_number: string | null;
   negotiation_enabled: boolean;
+  rider_keeps_delivery: boolean;
   trn: string | null;
   invoice_name: string | null;
   invoice_address: string | null;
@@ -23,7 +25,7 @@ export default async function SettingsPage() {
   // Explicit column list: this table also carries bot tokens, which must never leave the server.
   const { data } = await db
     .from("shops")
-    .select("id,name,status,whatsapp_number,negotiation_enabled,trn,invoice_name,invoice_address")
+    .select("id,name,status,whatsapp_number,negotiation_enabled,rider_keeps_delivery,trn,invoice_name,invoice_address")
     .in("id", scope.shopIds)
     .order("created_at");
   const shops = (data ?? []) as ShopSettingsRow[];
@@ -54,6 +56,16 @@ export default async function SettingsPage() {
                 </p>
               </div>
               <NegotiationToggle shopId={s.id} enabled={s.negotiation_enabled} />
+            </div>
+            <div className="flex items-center gap-2 rounded-xl bg-muted px-3 py-2.5">
+              <Bike className="size-4 text-subtle" strokeWidth={2} aria-hidden />
+              <div className="flex-1">
+                <p className="text-sm font-semibold">Riders keep delivery fee</p>
+                <p className="text-xs text-subtle">
+                  On = the rider pockets the delivery charge. Off = all cash goes to the shop.
+                </p>
+              </div>
+              <RiderDeliveryToggle shopId={s.id} enabled={s.rider_keeps_delivery} />
             </div>
             <details className="rounded-xl bg-muted px-3 py-2.5" open={!s.trn}>
               <summary className="flex items-center gap-2 cursor-pointer list-none">

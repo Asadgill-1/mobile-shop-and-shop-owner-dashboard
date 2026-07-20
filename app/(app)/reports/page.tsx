@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   Ban,
   Banknote,
+  Bike,
   ChartColumn,
   CreditCard,
   Landmark,
@@ -325,6 +326,18 @@ export default async function ReportsPage({
               tone={profit.discountCount > 0 ? "warning" : "neutral"}
             />
           </MaybeLink>
+          {profit.deliveryCollected > 0 ? (
+            <StatCard
+              label={
+                profit.deliveryKept > 0
+                  ? `Delivery (shop ${aed(profit.deliveryCollected - profit.deliveryKept)} · riders ${aed(profit.deliveryKept)})`
+                  : "Delivery collected"
+              }
+              value={aed(profit.deliveryCollected)}
+              icon={Bike}
+              tone="accent"
+            />
+          ) : null}
         </div>
       </section>
     </>

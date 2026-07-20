@@ -14,7 +14,7 @@ import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { fmtDubai } from "@/lib/period";
 import { aed, num, orderNet } from "@/lib/money";
-import type { OrderRow, StatusHistoryRow } from "@/lib/types";
+import { orderRef, type OrderRow, type StatusHistoryRow } from "@/lib/types";
 import { Badge, Card, PageHeader, SectionTitle, StatusPill } from "@/components/ui";
 import { DeliveryActions, type RiderOption } from "@/components/delivery-actions";
 import { ConfirmRejectButtons } from "@/components/order-actions";
@@ -74,7 +74,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         >
           <ArrowLeft className="size-5" strokeWidth={2} aria-hidden />
         </Link>
-        <PageHeader title={`Order #${order.order_number}`} sub={shopName}>
+        <PageHeader title={`Order ${orderRef(order.created_at, order.day_seq, order.order_number)}`} sub={shopName}>
           <StatusPill status={order.status} />
         </PageHeader>
       </div>

@@ -41,6 +41,9 @@ const T: Record<string, string> = {
   dash_stock_adj: "adjusted stock of product #{0} by {1}",
   dash_media: "updated media of product #{0} ({1})",
   dash_invoice_identity: "updated the shop's tax invoice details",
+  dash_rider_delivery: "set riders to {0} the delivery fee",
+  dash_offer_new: "added a {0} offer on product #{1}",
+  dash_offer_off: "removed the offer on product #{0}",
 };
 
 export function humanize(row: AuditRow): string {
@@ -90,6 +93,7 @@ for (const a of [
 for (const a of [
   "kboost", "kunboost", "ktag", "kuntag", "kcleartags", "kfeature", "kprodadd", "dedit",
   "dash_product_new", "dash_product_edit", "dash_product_delete", "dash_stock_adj", "dash_media",
+  "dash_offer_new", "dash_offer_off",
 ]) CATEGORY_OF[a] = "products";
 for (const a of ["dcsale", "dvoid", "dinv", "counter_sale", "ksheet", "countersheet_cmd"])
   CATEGORY_OF[a] = "pos";

@@ -47,3 +47,23 @@ export async function setNegotiation(shopId: string, enabled: boolean): Promise<
   revalidatePath("/settings");
   return { ok: true, message: `Negotiation ${enabled ? "on" : "off"}.` };
 }
+
+/** Delivery-cash policy (023): true = the rider keeps the delivery fee (it's their earning, the
+ *  reconcile ledger only tracks the product money); false = the rider hands all cash to the shop. */
+export async function setRiderKeepsDelivery(shopId: string, enabled: boolean): Promise<ActionResult> {
+  const scope = await getScope();
+  assertShop(scope, shopId);
+  const { error } = await db
+    .from("shops")
+    .update({ rider_keeps_delivery: enabled })
+    .eq("id", shopId);
+  if (error) return { ok: false, error: "Could not save the setting." };
+  await audit(`dashboard:${scope.email}`, "dash_rider_delivery", shopId, {
+    args: [enabled ? "keep" : "handover"],
+  });
+  revalidatePath("/settings");
+  return {
+    ok: true,
+    message: enabled ? "Riders keep the delivery fee." : "Riders hand delivery cash to the shop.",
+  };
+}

@@ -13,9 +13,12 @@ export interface OrderRow {
   address: string;
   product_id: string;
   quantity: number;
+  day_seq: number | null;
   /** TOTAL gross (unit × qty) — net charge = selling_price − discount_amount. */
   selling_price: string;
   discount_amount: string;
+  /** Home-delivery charge (023); customer paid selling_price − discount + delivery_fee. */
+  delivery_fee: string | null;
   delivery_date: string | null;
   rider_id: string | null;
   special_instructions: string | null;
@@ -148,6 +151,7 @@ export interface InvoiceRow {
   id: string;
   shop_id: string;
   invoice_number: number;
+  day_seq: number | null;
   source: "order" | "counter";
   order_id: string | null;
   counter_sale_ids: string[] | null;
@@ -169,6 +173,14 @@ export interface StatusHistoryRow {
   changed_at: string;
   changed_by: string | null;
 }
+
+export type OfferType =
+  | "free_gift"
+  | "percent_off"
+  | "amount_off"
+  | "free_delivery"
+  | "bogo"
+  | "bulk";
 
 /** audit_logs (migration 001) — the transparency feed behind Shop logs. */
 export interface AuditRow {
@@ -197,6 +209,42 @@ export function riderCode(n: number | null | undefined): string {
 /** "INV-000042" from invoices.invoice_number (per-shop sequence, migration 022). */
 export function invoiceCode(n: number | null | undefined): string {
   return n ? `INV-${String(n).padStart(6, "0")}` : "—";
+}
+
+/** Dubai wall-clock D/M from a UTC ISO string: shift +4h, read UTC parts (mirrors backend codes.py). */
+function dubaiDM(iso: string): { dd: string; mm: string } {
+  const d = new Date(new Date(iso).getTime() + 4 * 3600 * 1000);
+  return {
+    dd: String(d.getUTCDate()).padStart(2, "0"),
+    mm: String(d.getUTCMonth() + 1).padStart(2, "0"),
+  };
+}
+
+/** "ODR-20-07-001" from (created_at, orders.day_seq) — migration 023 date-based display ref.
+ *  Pre-023 orders have no day_seq → fall back to "#{order_number}" (or "—"). */
+export function orderRef(
+  createdAt: string | null,
+  daySeq: number | null | undefined,
+  fallbackNumber?: number | null,
+): string {
+  if (createdAt && daySeq) {
+    const { dd, mm } = dubaiDM(createdAt);
+    return `ODR-${dd}-${mm}-${String(daySeq).padStart(3, "0")}`;
+  }
+  return fallbackNumber ? `#${fallbackNumber}` : "—";
+}
+
+/** "INV-20-07-001" from (issued_at, invoices.day_seq) — migration 023 date-based display ref. */
+export function invoiceRef(
+  issuedAt: string | null,
+  daySeq: number | null | undefined,
+  fallbackNumber?: number | null,
+): string {
+  if (issuedAt && daySeq) {
+    const { dd, mm } = dubaiDM(issuedAt);
+    return `INV-${dd}-${mm}-${String(daySeq).padStart(3, "0")}`;
+  }
+  return invoiceCode(fallbackNumber); // pre-023 invoices keep their INV-000042 code
 }
 
 /** Low-stock rule, mirroring the bot: explicit threshold wins; else the ≤2 heuristic. */

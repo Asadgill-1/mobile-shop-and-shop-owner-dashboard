@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
-import { invoiceCode, type InvoiceRow } from "@/lib/types";
+import { invoiceRef, type InvoiceRow } from "@/lib/types";
 
 // FTA tax invoice, bilingual (Consumer Protection Law: Arabic mandatory, English optional).
 // Two paper formats: 80mm thermal slip (POS default) and A4. Browser print → paper or PDF.
@@ -43,7 +43,7 @@ export default async function InvoicePrintPage({
     .single();
   const legalName = shop?.invoice_name || shop?.name || "";
   const slip = (format ?? (inv.source === "counter" ? "receipt" : "a4")) !== "a4";
-  const code = invoiceCode(inv.invoice_number);
+  const code = invoiceRef(inv.issued_at, inv.day_seq, inv.invoice_number);
 
   const css = slip
     ? `
