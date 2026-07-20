@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Bike,
   ChartColumn,
+  ScrollText,
   Settings,
   Menu,
   X,
@@ -28,7 +29,7 @@ interface Item {
   badge?: number;
 }
 
-function items(draftCount: number, escalationCount: number): Item[] {
+function items(draftCount: number, escalationCount: number, isOwner: boolean): Item[] {
   return [
     { href: "/", label: "Home", icon: Home },
     { href: "/orders", label: "Orders", icon: ReceiptText, badge: draftCount },
@@ -38,6 +39,8 @@ function items(draftCount: number, escalationCount: number): Item[] {
     { href: "/chats", label: "Chats", icon: MessageSquare, badge: escalationCount },
     { href: "/riders", label: "Riders & COD", icon: Bike },
     { href: "/reports", label: "Reports", icon: ChartColumn },
+    // Owner-only transparency feed (PLAN §5.9); the page itself 404s for keepers.
+    ...(isOwner ? [{ href: "/logs", label: "Shop logs", icon: ScrollText }] : []),
     { href: "/settings", label: "Settings", icon: Settings },
   ];
 }
@@ -60,14 +63,16 @@ export function Nav({
   shopLabel,
   draftCount,
   escalationCount,
+  isOwner,
 }: {
   shopLabel: string;
   draftCount: number;
   escalationCount: number;
+  isOwner: boolean;
 }) {
   const pathname = usePathname();
   const [moreOpen, setMoreOpen] = useState(false);
-  const all = items(draftCount, escalationCount);
+  const all = items(draftCount, escalationCount, isOwner);
   const bottom = all.slice(0, 4); // Home · Orders · Inventory · POS
   const more = all.slice(4); //     Chats · Riders · Reports · Settings
   const moreBadge = more.reduce((n, item) => n + (item.badge ?? 0), 0);

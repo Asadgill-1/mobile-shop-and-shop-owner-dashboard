@@ -5,6 +5,7 @@ import { assertShop, getScope } from "@/lib/scope";
 import { fmtDubai } from "@/lib/period";
 import type { MessageRow } from "@/lib/types";
 import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
+import { ChatReply } from "@/components/chat-reply";
 import { RefreshPoll } from "@/components/refresh-poll";
 
 export default async function TranscriptPage({
@@ -59,16 +60,6 @@ export default async function TranscriptPage({
         </PageHeader>
       </div>
 
-      {isEscalated ? (
-        <div
-          role="status"
-          className="rounded-xl bg-warning-soft text-warning-text text-sm font-semibold px-4 py-3"
-        >
-          This customer is waiting for a human. Reply from the keeper bot (/reply) — replying from
-          the dashboard arrives in Phase 4.
-        </div>
-      ) : null}
-
       {messages.length === 0 ? (
         <Card>
           <EmptyState icon={MessageSquare} title="No messages saved" />
@@ -103,6 +94,8 @@ export default async function TranscriptPage({
           })}
         </div>
       )}
+
+      <ChatReply shopId={shopId} identity={identity} escalated={isEscalated} />
     </>
   );
 }

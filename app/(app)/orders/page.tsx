@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { HandCoins, Inbox, Plus, ReceiptText, Search } from "lucide-react";
+import { Download, HandCoins, Inbox, Plus, ReceiptText, Search } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { fmtDubai } from "@/lib/period";
@@ -39,6 +39,14 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   return (
     <>
       <PageHeader title="Orders" sub={multiShop ? "All shops" : shopName.get(ids[0])}>
+        <a
+          href={`/orders/export?period=monthly${status ? `&status=${status}` : ""}`}
+          aria-label="Export orders CSV (this month)"
+          className="pressable inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface text-sm font-semibold px-3.5 py-2.5 min-h-11"
+        >
+          <Download className="size-4" strokeWidth={2} aria-hidden />
+          CSV
+        </a>
         <Link
           href="/orders/new"
           className="pressable inline-flex items-center gap-1.5 rounded-xl bg-accent text-accent-fg text-sm font-semibold px-4 py-2.5 min-h-11"

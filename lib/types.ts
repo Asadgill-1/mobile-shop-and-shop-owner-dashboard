@@ -170,6 +170,20 @@ export interface StatusHistoryRow {
   changed_by: string | null;
 }
 
+/** audit_logs (migration 001) — the transparency feed behind Shop logs. */
+export interface AuditRow {
+  id: string;
+  shop_id: string | null;
+  actor: string; // telegram id, "dashboard:{email}", or "system"
+  action: string;
+  detail: {
+    args?: (string | number)[];
+    text?: string;
+    changes?: Record<string, [string, string]>; // dedit field diffs: {field: [old, new]}
+  };
+  created_at: string;
+}
+
 /** "PR0001" from products.product_number (utils/codes.py port). */
 export function productCode(n: number | null | undefined): string {
   return n ? `PR${String(n).padStart(4, "0")}` : "—";

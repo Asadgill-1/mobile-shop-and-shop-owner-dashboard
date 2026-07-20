@@ -29,6 +29,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         shopLabel={shopLabel}
         draftCount={draftsRes.count ?? 0}
         escalationCount={escRes.count ?? 0}
+        isOwner={scope.role === "owner"}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <header className="sticky top-0 z-20 border-b border-border bg-surface">

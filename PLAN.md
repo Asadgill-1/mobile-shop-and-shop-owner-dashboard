@@ -64,17 +64,16 @@ Session cookie via `@supabase/ssr` middleware. Every RSC/action starts:
 `getScope()` → `{role, shopIds[], clientId?}` — keeper: `shopIds=[shop_id]`; owner: `shopIds =` all shops where `client_id` matches.
 `assertShop(scope, shopId)` mirrors the bot's `_own_shop` guard (`src/app/telegram_bot/bot.py:2040`): unknown shop and foreign shop return the **identical 404** — never confirm another tenant's resource exists.
 
-### 3.3 Bridge API (features that live on the local PC)
-Escalation reply/handover (Redis freeze keys), Excel export (openpyxl), live health — these run in Python next to Redis. A ~12-endpoint internal API is added to the existing FastAPI app (`src/app/main.py`), bearer-token secured (`INTERNAL_API_TOKEN`, constant-time compare), exposed via **Cloudflare Tunnel** (free, stable hostname).
+### 3.3 Bridge API — **ELIMINATED in P4 (2026-07-20)**
+The planned Cloudflare-Tunnel bridge (~12 FastAPI endpoints + `INTERNAL_API_TOKEN` + a cloudflared/Task-Scheduler ops burden) turned out to be dead weight. Everything it existed for is served without it:
 
-Used by this dashboard:
-```
-POST /internal/escalations/reply     {shop_id, phone, text}
-POST /internal/escalations/handover  {shop_id, phone}
-POST /internal/export/orders         {shop_id, filter, detailed} → {url}   (24h signed URL)
-POST /internal/export/rider          {shop_id, rider_id, period} → {url}
-```
-Degradation: bridge down → only those buttons show "backend offline — try again later"; everything else keeps working.
+| Was a bridge endpoint | Now |
+|---|---|
+| `/internal/escalations/reply` | `actions/chats.ts::replyToCustomer` → Telegram Bot API direct (`lib/notify.ts`), archives `role=shopkeeper` with `relay_pending=true`; the AI picks it up via `sync_relay` on the next customer turn (migration 021) |
+| `/internal/escalations/handover` | `actions/chats.ts::resolveEscalation` sets `pending_escalations.resolved_at`; the backend's `escalations/service.py::still_frozen` (pipeline step 4b) verifies a Redis freeze against the DB and lazily unfreezes when the dashboard closed the row |
+| `/internal/export/orders`, `/rider` | `app/(app)/{orders,riders,logs}/export/route.ts` — the dashboard has service-role DB access, so it builds the CSV itself (`lib/csv.ts`) and streams it as an attachment. No signed URLs |
+
+No bearer token, no tunnel, no signed URLs, no always-on FastAPI dependency for the dashboard. Reply degradation: `replyToCustomer` returns "Could not deliver" **without archiving** when Telegram rejects the send (mirrors `reply()`'s deliver-first rule). Everything else already degrades best-effort.
 
 ### 3.4 Shared conventions with the Owner Console repo
 `shared/` folder of byte-identical files in both repos, each headed `// SHARED with owner-dashboard-mobile — edit both`:
@@ -224,19 +223,21 @@ Shipped schema (migration 022): `shops.trn/invoice_name/invoice_address`; `invoi
 | COD outstanding | as §5.7 | exists |
 | Exports hub | all bridge export buttons + links | exists via bridge |
 
-### 5.9 Owner-only: Shops + Oversight (anti-corruption) + Settings
-| View / Action | Backend reference | Status |
+### 5.9 Owner-only: Shop logs (transparency/anti-corruption) + Reports + Settings — ✅ BUILT (P4)
+The planned Oversight views collapsed into **one owner-gated "Shop logs" tab** (`app/(app)/logs/page.tsx`, `?view=activity|cancels|discounts`) — the surface the owner asked for ("many shops, they see things days later; they must know *when* it happened"). `scope.role !== "owner"` → `notFound()`; the nav entry is hidden for keepers (both verified live).
+
+| View / Action | How | Status |
 |---|---|---|
-| Shops overview cards (status, today's numbers) | `shops by client_id` (mirror `list_shops_by_client`) | exists |
-| Compare shops profit side-by-side (period) | mirror `/owner profit compare` math per owned shop | exists |
-| **Cancelled orders + remarks** (all shops, filter shop/period) — remarks front-and-center | mirror `cancelled_orders` (`orders/service.py:579`) | exists |
-| **Discounted orders** | mirror `discounted_orders` (`orders/service.py:598`) | exists |
-| **Activity log** (filter shop/actor/action/date) — what every keeper did | `audit_logs` (mirror `audit.recent`) | exists |
-| Cross-shop chat transcripts (each view audited) | `messages` | exists |
-| COD balances across all shops | `cod_ledger` | exists |
-| Settings: negotiation on/off per shop | mirror `set_negotiation` (`orders/service.py:355`) | exists |
-| Settings: invoice TRN / legal name / address per shop | new `shops` columns (021) | **NEW** |
-| Settings: staff list per shop (read-only; provisioning in Owner Console) | `shopkeepers` | exists |
+| **Activity log** — every shop action, period + shop + category (Orders/Products/POS/Chats) filters, actor names resolved (dashboard email / telegram id → keeper·rider name) | `audit_logs` + `lib/activity.ts` (TS port of `_HUMAN_ACTIONS`) | ✅ |
+| **Price/stock changes** front-and-center — the dashboard is the only surface that edits `selling_price`/`cost_price`; `updateProduct` now audits a field-level `dedit` diff so the log shows "Price: AED 1,500 → AED 1,100" | `audit_logs.detail.changes` (jsonb, no migration) | ✅ NEW |
+| **Cancelled orders + remarks** (remarks front-and-center, who cancelled) | mirror `cancelled_orders` (`orders/service.py:742`) | ✅ |
+| **Discounted orders** (amount given away, who) | mirror `discounted_orders` (`orders/service.py:761`) | ✅ |
+| CSV export of any view | `logs/export/route.ts` (dashboard-side, no bridge) | ✅ |
+| Reports: full analytics — daily revenue trend, channel + payment split, per-shop comparison, product performance + slow movers, VAT collected, cancels/discount counts (deep-link into Shop logs) | `lib/profit.ts` extended; money verified equal to backend `profit_summary`+`merge_counter` to the dirham | ✅ NEW |
+| Settings: negotiation on/off per shop | mirror `set_negotiation` (`orders/service.py:355`) | ✅ |
+| Settings: invoice TRN / legal name / address per shop | `shops` columns (migration 022) | ✅ |
+| Cross-shop chat transcripts | `messages` (chats tab; per-view auditing skipped — YAGNI, add if an owner asks who read what) | ✅ (read) |
+| COD balances across all shops | `cod_ledger` (riders tab) | ✅ |
 
 ## 6. Route / action structure
 
@@ -289,17 +290,15 @@ originally planned (021 went to the AI-relay fix before invoices, since that was
    its next turn (`_replay` calls it before loading history). No bridge/endpoint needed — it runs
    inside the existing orchestrator, so it's live the moment the backend process is running. This
    **closes** the "dashboard actions invisible to the AI" gap that P2 originally shipped with.
-2. Bridge endpoints (P4, not yet built) in `src/app/main.py`: escalations reply/handover, export
-   orders/rider (~40 lines, each a thin wrapper over existing service functions) +
-   `INTERNAL_API_TOKEN` in `config/settings.py`.
-3. Ops: `cloudflared tunnel` pointing at local FastAPI (documented; Task Scheduler entry) — P4.
+2. ~~Bridge endpoints in `src/app/main.py` + `INTERNAL_API_TOKEN`~~ — **cancelled in P4.** The dashboard sends Telegram directly and reads/writes the DB directly, so no internal API is needed (see §3.3). The only backend change P4 needed: `escalations/service.py::still_frozen` (DB-verifies a Redis freeze so the dashboard's `resolved_at` write lazily unfreezes the AI on the customer's next turn), `reports/service.py::_HUMAN_ACTIONS` += `dreply`/`dhandover`/`dedit`/`counter_sale`/`kprodadd`, and a `kprodadd` audit at the end of the bot's add-product flow.
+3. ~~Ops: `cloudflared tunnel`~~ — **cancelled.** No tunnel, no Task Scheduler entry; the dashboard is self-sufficient on Vercel.
 
 ## 9. Build phases
 - ✅ **P0 (backend)**: `020_dashboard_users.sql` applied live (in the `new retail v2` backend repo); `scripts/seed_dashboard_users.py` provisions logins. Bridge endpoints + tunnel deferred to P4.
 - ✅ **P1** (2026-07-19): scaffold, Supabase Auth, `lib/scope.ts` (tenant guard, verified live to 404 identically to the bots' `_own_shop` on a foreign shop/order/chat), read-only Home / Orders / Inventory / Chats / Riders & COD / Reports / Settings, dark mode pair, mobile bottom nav + More sheet. `lib/period.ts`/`lib/profit.ts` port `parse_period`/`profit_summary` from the Python backend byte-for-byte.
 - ✅ **P2** (2026-07-19): all mutations as server actions (`actions/orders.ts`, `products.ts`, `media.ts`, `riders.ts`, `settings.ts`) — each a line-by-line port of its Python service twin (same guards, same atomic `decrement_stock` RPC, same audit action codes `kconf`/`krej`/`kdup`/`kappr`/`kcust`/`kdeny`/`kasgr`/`krec`/`kneg`, `actor="dashboard:{email}"`). Telegram notifies via `lib/notify.ts` (direct Bot API calls, best-effort, archives to `messages`). Media upload via signed URL → Storage direct. **Live-verified**: draft created → confirmed (stock decremented, customer notified, audited) → packed → cancelled (stock restored, remarks recorded); negotiation toggled off→on (audited). *Gap closed same day (see migration 021 above): dashboard sends now reach the backend's Redis AI session via `sync_relay` — no bridge needed for this one.*
 - ✅ **P3** (2026-07-19): POS + Invoices + IMEI tracking, upgraded after market/regulation research (§5.4/§5.5). Backend migration `022_pos_invoices.sql` applied live (it DID reuse the existing `counter_sales`, exactly as the check above suspected). Live-verified: sale with compulsory IMEI (rejected without, accepted with, unit ledger linked), stock 6→5→6 across void, VAT 161.86 on a 3,399 sale (5/105 exact), per-shop sequential INV-000001/2, bilingual 80mm slip + A4 print, TRN settings, order→invoice creation, mobile + dark. **Deferred by user decision**: repair tickets & trade-ins (own phase later — niche-POS research says they matter, but they'd have tripled P3); ASP/Peppol e-invoicing (B2C excluded from the 2027 mandate); IMEI capture on online-order handover.
-- **P4**: owner role — shop switcher ✅ (built in P1, works today), Oversight views (cancellations/discounts/activity/cross-shop transcripts — not yet built), exports (bridge), escalation reply/handover (bridge). Bridge = ~12 endpoints on the backend's `src/app/main.py`, bearer-token secured, via Cloudflare Tunnel.
+- ✅ **P4** (2026-07-20): owner role complete, **bridge eliminated** (§3.3). Built: **Shop logs** tab (owner-gated activity/cancels/discounts, price-change `dedit` diffs, category+shop+period filters, actor-name resolution) · **dashboard chat reply + "Return to AI"** handover (`actions/chats.ts`, Telegram-direct + DB `resolved_at`; backend `still_frozen` unfreezes lazily) · **CSV exports** (orders/riders/logs, dashboard-built, no signed URLs) · **analytical Reports** (daily trend, channel/payment split, per-shop table, product performance + slow movers, VAT, cancels/discounts). Backend: `still_frozen` + 5 new humanizer codes + `kprodadd` audit, 502 tests green. **Live-verified**: owner login → price 1500→1350 edit shows "Price: AED 1,500 → AED 1,350" in Shop logs with time/actor/shop; keeper login → no Shop logs nav + `/logs` 404; CSV downloads with the diff column; reports money equals backend `profit_summary` to the dirham; day-revenue bars + money-wrap polish. **Skipped/deferred**: per-view transcript auditing (YAGNI), repairs/trade-ins (own phase), WhatsApp cutover (Stage 13).
 - **P5**: mobile nav polish (mostly done in P1 — bottom nav + More sheet, dark mode, skeletons, 44px targets), empty/error/loading states (largely in place — `loading.tsx`/`error.tsx`/`not-found.tsx` + `EmptyState` used throughout), AED + Dubai-TZ sweep, dark-mode contrast re-audit.
 
 (Sequenced after Owner Console P1–P2 so logins can be provisioned — in practice P0's `scripts/seed_dashboard_users.py` was enough to unblock P1/P2 testing without the Owner Console.)

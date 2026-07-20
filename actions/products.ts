@@ -158,7 +158,24 @@ export async function deleteUnit(unitId: string): Promise<ActionResult> {
   return { ok: true, message: "IMEI removed." };
 }
 
-/** Full edit (PLAN §5.3 "exists (new surface)") — same validators as create. */
+// Owner-relevant edit fields → the label Shop logs prints. Order = summary order
+// (prices first — the change an owner most wants to catch).
+const DIFF_LABELS: Record<string, string> = {
+  selling_price: "price",
+  cost_price: "cost",
+  brand: "brand",
+  model: "model",
+  color: "color",
+  category: "category",
+  condition: "condition",
+  min_qty: "low-stock alert",
+  barcode: "barcode",
+};
+const NUMERIC_DIFF = new Set(["selling_price", "cost_price", "min_qty"]);
+
+/** Full edit (PLAN §5.3 "exists (new surface)") — same validators as create.
+ *  Audits a field-level old→new diff (dedit) so owners see WHAT changed, not just that
+ *  something did — the dashboard is the only surface that can edit prices. */
 export async function updateProduct(
   _prev: ActionResult | null,
   formData: FormData,
@@ -170,8 +187,36 @@ export async function updateProduct(
 
   try {
     const fields = productFields(formData);
+    const { data: before } = await db
+      .from("products")
+      .select("selling_price,cost_price,brand,model,color,category,condition,min_qty,barcode")
+      .eq("id", product.id)
+      .single();
+
     await db.from("products").update(fields).eq("id", product.id).eq("shop_id", product.shop_id);
-    await audit(email, "dash_product_edit", product.shop_id, { args: [product.product_number] });
+
+    const changes: Record<string, [string, string]> = {};
+    for (const key of Object.keys(DIFF_LABELS)) {
+      const oldRaw = (before as Record<string, unknown> | null)?.[key];
+      const newRaw = fields[key];
+      const norm = (v: unknown) =>
+        v == null ? "" : NUMERIC_DIFF.has(key) ? String(Number(v)) : String(v).trim();
+      const [a, b] = [norm(oldRaw), norm(newRaw)];
+      if (a !== b) changes[key] = [a || "—", b || "—"];
+    }
+
+    if (Object.keys(changes).length > 0) {
+      const summary = Object.entries(changes)
+        .slice(0, 3)
+        .map(([k, [a, b]]) => `${DIFF_LABELS[k]} ${a}→${b}`)
+        .join(", ");
+      await audit(email, "dedit", product.shop_id, {
+        args: [product.product_number, summary],
+        changes,
+      });
+    } else {
+      await audit(email, "dash_product_edit", product.shop_id, { args: [product.product_number] });
+    }
     revalidatePath("/inventory");
     revalidatePath(`/inventory/${product.id}`);
     return { ok: true, message: "Saved." };

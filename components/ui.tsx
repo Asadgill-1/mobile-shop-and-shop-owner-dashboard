@@ -107,7 +107,7 @@ export function StatCard({
       </div>
       <div className="min-w-0">
         <p className="text-xs font-semibold text-subtle uppercase tracking-wide">{label}</p>
-        <p className="font-display text-xl font-semibold tabular truncate">{value}</p>
+        <p className="font-display text-lg sm:text-xl font-semibold tabular leading-tight break-words">{value}</p>
         {hint ? <p className="text-xs text-subtle mt-0.5">{hint}</p> : null}
       </div>
     </Card>

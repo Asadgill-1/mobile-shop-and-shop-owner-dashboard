@@ -1,4 +1,4 @@
-import { Bike, CircleCheck, CircleSlash, HandCoins } from "lucide-react";
+import { Bike, CircleCheck, CircleSlash, Download, HandCoins } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { fmtDubai } from "@/lib/period";
@@ -39,6 +39,14 @@ export default async function RidersPage() {
   return (
     <>
       <PageHeader title="Riders & COD" sub={`${riders.length} rider${riders.length === 1 ? "" : "s"}`}>
+        <a
+          href="/riders/export?period=monthly"
+          aria-label="Export rider deliveries CSV (this month)"
+          className="pressable inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface text-sm font-semibold px-3.5 py-2.5 min-h-11"
+        >
+          <Download className="size-4" strokeWidth={2} aria-hidden />
+          CSV
+        </a>
         <AddRiderForm shops={scope.shops} />
       </PageHeader>
 

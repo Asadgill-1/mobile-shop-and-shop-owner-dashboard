@@ -8,9 +8,15 @@ const aedFmt = new Intl.NumberFormat("en-AE", {
   maximumFractionDigits: 0,
 });
 
+/** Intl glues "AED" to the digits with a non-breaking space; a normal space lets a narrow
+ *  stat card wrap as "AED" / "11,397" instead of clipping or breaking mid-number. */
+function breakable(s: string): string {
+  return s.replace(/ /g, " ");
+}
+
 export function aed(value: number | string | null | undefined): string {
   const n = Number(value ?? 0);
-  return aedFmt.format(Number.isFinite(n) ? n : 0);
+  return breakable(aedFmt.format(Number.isFinite(n) ? n : 0));
 }
 
 export function num(value: number | string | null | undefined): number {
@@ -33,7 +39,7 @@ const aed2Fmt = new Intl.NumberFormat("en-AE", {
 /** Fils-exact AED — tax invoices must show the VAT amount to the fils (FTA). */
 export function aed2(value: number | string | null | undefined): string {
   const n = Number(value ?? 0);
-  return aed2Fmt.format(Number.isFinite(n) ? n : 0);
+  return breakable(aed2Fmt.format(Number.isFinite(n) ? n : 0));
 }
 
 /** VAT inside a VAT-inclusive retail total: total × 5/105, computed in integer fils
