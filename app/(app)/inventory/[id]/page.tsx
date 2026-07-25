@@ -44,14 +44,14 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
   // quantity is authoritative; the ledger drifting from it is worth a glance, not an error
   const unitMismatch = units.length > 0 && inStockUnits !== p.quantity;
 
-  // Offers (023): the active one, plus this shop's other products as free-gift candidates.
-  const [{ data: offerRow }, { data: giftRows }] = await Promise.all([
+  // Offers (023/027): a product can carry one advertised offer AND one bargaining chip, so this
+  // reads a list — maybeSingle() would throw the moment a shop set both.
+  const [{ data: offerRows }, { data: giftRows }] = await Promise.all([
     db
       .from("offers")
-      .select("id,type,label,value")
+      .select("id,type,label,value,reveal")
       .eq("product_id", p.id)
-      .eq("active", true)
-      .maybeSingle(),
+      .eq("active", true),
     db
       .from("products")
       .select("id,product_number,brand,model")
@@ -59,7 +59,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
       .neq("id", p.id)
       .order("brand"),
   ]);
-  const offer = (offerRow ?? null) as ActiveOffer | null;
+  const offers = (offerRows ?? []) as ActiveOffer[];
   const giftOptions: GiftOption[] = (giftRows ?? []).map((g) => ({
     id: g.id,
     label: `${productCode(g.product_number)} · ${g.brand} ${g.model}`,
@@ -134,7 +134,7 @@ export default async function ProductEditPage({ params }: { params: Promise<{ id
           </Card>
           <Card className="p-5 flex flex-col gap-4">
             <SectionTitle>Offer</SectionTitle>
-            <OfferManager productId={p.id} offer={offer} giftOptions={giftOptions} />
+            <OfferManager productId={p.id} offers={offers} giftOptions={giftOptions} />
           </Card>
         </div>
       </div>

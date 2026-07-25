@@ -20,6 +20,7 @@ export interface ProductDefaults {
   specs?: Record<string, string>;
   cost_price?: string;
   selling_price?: string;
+  min_price?: string | null;
   quantity?: number;
   min_qty?: number;
   barcode?: string | null;
@@ -114,6 +115,19 @@ export function ProductForm({
         </Field>
         <Field label="Selling price (AED)">
           <input name="selling_price" required inputMode="decimal" defaultValue={defaults.selling_price} placeholder="3400" className={`${inputCls} tabular`} />
+        </Field>
+        <Field label="Lowest price you'd accept (optional)">
+          <input
+            name="min_price"
+            inputMode="decimal"
+            defaultValue={defaults.min_price ?? ""}
+            placeholder="leave empty to skip"
+            className={`${inputCls} tabular`}
+          />
+          <span className="text-xs text-subtle">
+            Only used when the assistant bargains on its own. It never goes below this, and never
+            below your cost.
+          </span>
         </Field>
         {mode === "create" ? (
           <Field label="Quantity in stock">

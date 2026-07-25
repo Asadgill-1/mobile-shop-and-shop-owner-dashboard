@@ -61,8 +61,18 @@ export async function createOffer(
   const label =
     String(formData.get("label") ?? "").trim() || defaultOfferLabel(type, value ?? 0, giftName);
 
-  // one active per product: retire any current active offer first (unique partial index enforces it)
-  await db.from("offers").update({ active: false }).eq("product_id", productId).eq("active", true);
+  // When the customer hears about it (027): advertised on sight, or held back as a bargaining
+  // chip and spent only once they push on price.
+  const reveal = formData.get("reveal") === "on_haggle" ? "on_haggle" : "always";
+
+  // one active per product PER REVEAL MODE (unique partial index enforces it) — retire the
+  // current offer of THIS kind only, so an advertised offer and a bargaining chip can coexist.
+  await db
+    .from("offers")
+    .update({ active: false })
+    .eq("product_id", productId)
+    .eq("active", true)
+    .eq("reveal", reveal);
   const { error } = await db.from("offers").insert({
     shop_id: shopId,
     product_id: productId,
@@ -70,6 +80,7 @@ export async function createOffer(
     gift_product_id: giftProductId,
     value: value === null ? null : String(value),
     label,
+    reveal,
   });
   if (error) return { ok: false, error: "Could not save the offer." };
 
@@ -84,7 +95,13 @@ export async function createOffer(
     text: label,
   });
   revalidatePath(`/inventory/${productId}`);
-  return { ok: true, message: "Offer live — the AI will mention it to customers." };
+  return {
+    ok: true,
+    message:
+      reveal === "on_haggle"
+        ? "Saved — kept back until a customer starts bargaining."
+        : "Offer live — the AI will mention it to customers.",
+  };
 }
 
 export async function endOffer(offerId: string): Promise<ActionResult> {

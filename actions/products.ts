@@ -44,6 +44,18 @@ function productFields(formData: FormData): Record<string, unknown> {
   }
   const cost = parsePrice(String(formData.get("cost_price") ?? ""), "Cost price");
   const sell = parsePrice(String(formData.get("selling_price") ?? ""), "Selling price");
+
+  // Optional bargaining floor (migration 027). The engine clamps at cost anyway, but a shop that
+  // typed a losing number deserves to be told, not silently corrected.
+  const floorRaw = String(formData.get("min_price") ?? "").trim();
+  let minPrice: string | null = null;
+  if (floorRaw) {
+    const floor = parsePrice(floorRaw, "Minimum price");
+    if (floor < cost) throw new Error(`Minimum price is below your cost of ${cost} AED.`);
+    if (floor > sell) throw new Error(`Minimum price is above the selling price of ${sell} AED.`);
+    minPrice = String(floor);
+  }
+
   return {
     category,
     condition,
@@ -53,6 +65,7 @@ function productFields(formData: FormData): Record<string, unknown> {
     specs: parseSpecs(String(formData.get("specs") ?? "")),
     cost_price: String(cost),
     selling_price: String(sell),
+    min_price: minPrice,
     min_qty: parseQuantity(String(formData.get("min_qty") ?? "0")),
     barcode: String(formData.get("barcode") ?? "").trim() || null,
   };
@@ -168,10 +181,11 @@ const DIFF_LABELS: Record<string, string> = {
   color: "color",
   category: "category",
   condition: "condition",
+  min_price: "minimum price",
   min_qty: "low-stock alert",
   barcode: "barcode",
 };
-const NUMERIC_DIFF = new Set(["selling_price", "cost_price", "min_qty"]);
+const NUMERIC_DIFF = new Set(["selling_price", "cost_price", "min_price", "min_qty"]);
 
 /** Full edit (PLAN §5.3 "exists (new surface)") — same validators as create.
  *  Audits a field-level old→new diff (dedit) so owners see WHAT changed, not just that
@@ -189,7 +203,7 @@ export async function updateProduct(
     const fields = productFields(formData);
     const { data: before } = await db
       .from("products")
-      .select("selling_price,cost_price,brand,model,color,category,condition,min_qty,barcode")
+      .select("selling_price,cost_price,brand,model,color,category,condition,min_price,min_qty,barcode")
       .eq("id", product.id)
       .single();
 

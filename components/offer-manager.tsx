@@ -13,6 +13,8 @@ export interface ActiveOffer {
   type: OfferType;
   label: string;
   value: string | null;
+  /** 'always' = advertised on sight; 'on_haggle' = held back as a bargaining chip (027). */
+  reveal?: string | null;
 }
 export interface GiftOption {
   id: string;
@@ -31,14 +33,15 @@ const TYPE_LABELS: Record<OfferType, string> = {
 const inputCls =
   "rounded-xl border border-border bg-background px-3.5 py-2.5 min-h-11 text-base placeholder:text-subtle";
 
-/** One active offer per product: shows the current one (with End), else the create form. */
+/** Up to two live offers per product (027): one advertised, one kept for bargaining.
+ *  Each is shown with an End button; the form below adds or replaces one of the two slots. */
 export function OfferManager({
   productId,
-  offer,
+  offers,
   giftOptions,
 }: {
   productId: string;
-  offer: ActiveOffer | null;
+  offers: ActiveOffer[];
   giftOptions: GiftOption[];
 }) {
   const router = useRouter();
@@ -46,35 +49,45 @@ export function OfferManager({
   const [type, setType] = useState<OfferType>("free_gift");
   const [ending, startEnd] = useTransition();
 
-  if (offer) {
-    return (
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 rounded-xl bg-accent-soft text-accent-text px-3.5 py-3">
-          <Gift className="size-5 shrink-0" strokeWidth={2} aria-hidden />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold">{offer.label}</p>
-            <p className="text-xs opacity-80">{TYPE_LABELS[offer.type]}</p>
-          </div>
-          <button
-            type="button"
-            disabled={ending}
-            onClick={() => startEnd(async () => { await endOffer(offer.id); router.refresh(); })}
-            className="pressable cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold disabled:opacity-60"
+  const live = offers.length ? (
+    <div className="flex flex-col gap-2">
+      {offers.map((offer) => {
+        const held = offer.reveal === "on_haggle";
+        return (
+          <div
+            key={offer.id}
+            className={`flex items-center gap-2 rounded-xl px-3.5 py-3 ${
+              held ? "bg-muted" : "bg-accent-soft text-accent-text"
+            }`}
           >
-            {ending ? <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden /> : <X className="size-3.5" strokeWidth={2} aria-hidden />}
-            End
-          </button>
-        </div>
-        <p className="text-xs text-subtle">The AI mentions this to customers and it applies automatically at sale.</p>
-      </div>
-    );
-  }
+            <Gift className="size-5 shrink-0" strokeWidth={2} aria-hidden />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold">{offer.label}</p>
+              <p className="text-xs opacity-80">
+                {TYPE_LABELS[offer.type]} · {held ? "kept for bargaining" : "advertised"}
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={ending}
+              onClick={() => startEnd(async () => { await endOffer(offer.id); router.refresh(); })}
+              className="pressable cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold disabled:opacity-60"
+            >
+              {ending ? <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden /> : <X className="size-3.5" strokeWidth={2} aria-hidden />}
+              End
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  ) : null;
 
   const needsGift = type === "free_gift";
   const needsValue = ["percent_off", "amount_off", "bogo", "bulk"].includes(type);
 
   return (
     <form action={action} className="flex flex-col gap-2.5">
+      {live}
       <input type="hidden" name="product_id" value={productId} />
       <label className="flex flex-col gap-1">
         <span className="text-xs font-semibold text-subtle">Offer type</span>
@@ -124,6 +137,17 @@ export function OfferManager({
       <label className="flex flex-col gap-1">
         <span className="text-xs font-semibold text-subtle">Customer-facing text (optional)</span>
         <input name="label" placeholder="Auto-generated if blank" className={inputCls} />
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-semibold text-subtle">When customers hear about it</span>
+        <select name="reveal" defaultValue="always" className={inputCls}>
+          <option value="always">Advertise it — mentioned whenever this product comes up</option>
+          <option value="on_haggle">Keep for bargaining — only once they push on price</option>
+        </select>
+        <span className="text-xs text-subtle">
+          A freebie held back closes a haggle without cutting your price.
+        </span>
       </label>
 
       <Feedback result={result} />

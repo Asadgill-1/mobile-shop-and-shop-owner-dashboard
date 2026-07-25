@@ -1,10 +1,12 @@
-import { Bike, FileText, Settings2, Store } from "lucide-react";
+import { Bike, FileText, Handshake, MessageCircle, Settings2, Store } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { Badge, Card, PageHeader, SectionTitle } from "@/components/ui";
 import { NegotiationToggle } from "@/components/negotiation-toggle";
 import { RiderDeliveryToggle } from "@/components/rider-delivery-toggle";
 import { InvoiceIdentityForm } from "@/components/invoice-identity-form";
+import { AssistantPersonaForm } from "@/components/assistant-persona-form";
+import { HaggleAuthorityForm } from "@/components/haggle-authority-form";
 
 interface ShopSettingsRow {
   id: string;
@@ -16,6 +18,11 @@ interface ShopSettingsRow {
   trn: string | null;
   invoice_name: string | null;
   invoice_address: string | null;
+  assistant_name: string | null;
+  assistant_gender: string | null;
+  assistant_style: string | null;
+  haggle_ask_every_time: boolean;
+  ai_max_discount_pct: number | string | null;
 }
 
 export default async function SettingsPage() {
@@ -25,7 +32,7 @@ export default async function SettingsPage() {
   // Explicit column list: this table also carries bot tokens, which must never leave the server.
   const { data } = await db
     .from("shops")
-    .select("id,name,status,whatsapp_number,negotiation_enabled,rider_keeps_delivery,trn,invoice_name,invoice_address")
+    .select("id,name,status,whatsapp_number,negotiation_enabled,rider_keeps_delivery,trn,invoice_name,invoice_address,assistant_name,assistant_gender,assistant_style,haggle_ask_every_time,ai_max_discount_pct")
     .in("id", scope.shopIds)
     .order("created_at");
   const shops = (data ?? []) as ShopSettingsRow[];
@@ -57,6 +64,41 @@ export default async function SettingsPage() {
               </div>
               <NegotiationToggle shopId={s.id} enabled={s.negotiation_enabled} />
             </div>
+            <details className="rounded-xl bg-muted px-3 py-2.5" open={!s.assistant_name}>
+              <summary className="flex items-center gap-2 cursor-pointer list-none">
+                <MessageCircle className="size-4 text-subtle shrink-0" strokeWidth={2} aria-hidden />
+                <span className="text-sm font-semibold flex-1">Who answers customers</span>
+                <Badge tone={s.assistant_name ? "accent" : "warning"}>
+                  {s.assistant_name ?? "unnamed"}
+                </Badge>
+              </summary>
+              <div className="pt-3">
+                <AssistantPersonaForm
+                  shopId={s.id}
+                  name={s.assistant_name}
+                  gender={s.assistant_gender}
+                  style={s.assistant_style}
+                />
+              </div>
+            </details>
+            <details className="rounded-xl bg-muted px-3 py-2.5">
+              <summary className="flex items-center gap-2 cursor-pointer list-none">
+                <Handshake className="size-4 text-subtle shrink-0" strokeWidth={2} aria-hidden />
+                <span className="text-sm font-semibold flex-1">Bargaining limit</span>
+                <Badge tone={s.haggle_ask_every_time ? "warning" : "accent"}>
+                  {s.haggle_ask_every_time
+                    ? "you decide"
+                    : `up to ${Number(s.ai_max_discount_pct ?? 0)}%`}
+                </Badge>
+              </summary>
+              <div className="pt-3">
+                <HaggleAuthorityForm
+                  shopId={s.id}
+                  askEveryTime={s.haggle_ask_every_time}
+                  maxDiscountPct={Number(s.ai_max_discount_pct ?? 0)}
+                />
+              </div>
+            </details>
             <div className="flex items-center gap-2 rounded-xl bg-muted px-3 py-2.5">
               <Bike className="size-4 text-subtle" strokeWidth={2} aria-hidden />
               <div className="flex-1">
