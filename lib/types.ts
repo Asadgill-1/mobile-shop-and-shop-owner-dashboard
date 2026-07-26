@@ -53,6 +53,7 @@ export interface ProductRow {
   specs: Record<string, string>;
   cost_price: string;
   selling_price: string;
+  min_price?: string | null;
   quantity: number;
   min_qty: number;
   images: string[];
@@ -251,4 +252,22 @@ export function invoiceRef(
 export function isLowStock(p: { quantity: number; min_qty?: number | null }): boolean {
   const min = p.min_qty ?? 0;
   return min > 0 ? p.quantity <= min : p.quantity <= 2;
+}
+
+/**
+ * Products the assistant can discount most of the profit out of.
+ *
+ * When it bargains on its own it goes down to `list × (1 − pct)`, clamped at cost. A flat
+ * percentage of PRICE is regressive against MARGIN: at a 6% cap a product needs 12% margin to keep
+ * even half its profit, and 6% to keep any at all. So anything under twice the cap wants a floor
+ * of its own, and a shop that approves every discount by hand (cap 0) needs none of this.
+ */
+export function needsFloor(
+  p: { selling_price: string; cost_price: string; min_price?: string | null },
+  maxDiscountPct: number,
+): boolean {
+  if (maxDiscountPct <= 0 || p.min_price) return false;
+  const list = Number(p.selling_price);
+  if (!(list > 0)) return false;
+  return (list - Number(p.cost_price)) / list < (2 * maxDiscountPct) / 100;
 }

@@ -3,7 +3,7 @@ import { ImageOff, Package, Plus, Star, Video } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { aed } from "@/lib/money";
-import { isLowStock, productCode, type ProductRow } from "@/lib/types";
+import { isLowStock, needsFloor, productCode, type ProductRow } from "@/lib/types";
 import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
 
 const CATEGORIES = ["Mobile", "Laptop", "Tablet", "Accessory"] as const;
@@ -12,16 +12,17 @@ interface Params {
   cat?: string;
   q?: string;
   low?: string;
+  floor?: string;
 }
 
 export default async function InventoryPage({ searchParams }: { searchParams: Promise<Params> }) {
-  const [{ cat, q, low }, scope] = await Promise.all([searchParams, getScope()]);
+  const [{ cat, q, low, floor }, scope] = await Promise.all([searchParams, getScope()]);
   const ids = scopedShopIds(scope);
 
   let query = db
     .from("products")
     .select(
-      "id,shop_id,product_number,category,brand,model,color,condition,selling_price,cost_price,quantity,min_qty,images,video_url,boost_level,tags,is_featured",
+      "id,shop_id,product_number,category,brand,model,color,condition,selling_price,cost_price,min_price,quantity,min_qty,images,video_url,boost_level,tags,is_featured",
     )
     .in("shop_id", ids)
     .order("boost_level", { ascending: false })
@@ -34,7 +35,21 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
 
   const { data } = await query;
   let products = (data ?? []) as unknown as ProductRow[];
+
+  // How far the assistant may discount on its own, per shop — an owner's list spans several, and
+  // "ask me before every discount" means it never bargains alone, so nothing needs a floor there.
+  const { data: haggle } = await db
+    .from("shops")
+    .select("id,ai_max_discount_pct,haggle_ask_every_time")
+    .in("id", ids);
+  const capOf = new Map(
+    (haggle ?? []).map((s) => [s.id, s.haggle_ask_every_time ? 0 : Number(s.ai_max_discount_pct ?? 0)]),
+  );
+  const wantsFloor = (p: ProductRow) => needsFloor(p, capOf.get(p.shop_id) ?? 0);
+
   if (low === "1") products = products.filter(isLowStock);
+  if (floor === "1") products = products.filter(wantsFloor);
+  const floorCount = products.filter(wantsFloor).length;
 
   // First image of each product → 1h signed URL (private bucket, PLAN §5.3).
   const paths = products.map((p) => p.images?.[0]).filter(Boolean) as string[];
@@ -68,6 +83,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       <form className="flex flex-wrap gap-2" action="/inventory" method="get">
         {cat ? <input type="hidden" name="cat" value={cat} /> : null}
         {low ? <input type="hidden" name="low" value={low} /> : null}
+        {floor ? <input type="hidden" name="floor" value={floor} /> : null}
         <input
           type="search"
           name="q"
@@ -85,7 +101,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
       </form>
 
       <div className="flex gap-2 overflow-x-auto -mx-4 px-4 lg:mx-0 lg:px-0">
-        <Chip href="/inventory" active={!cat && low !== "1"}>
+        <Chip href="/inventory" active={!cat && low !== "1" && floor !== "1"}>
           All
         </Chip>
         {CATEGORIES.map((c) => (
@@ -96,6 +112,11 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         <Chip href="/inventory?low=1" active={low === "1"}>
           Low stock
         </Chip>
+        {floorCount > 0 || floor === "1" ? (
+          <Chip href="/inventory?floor=1" active={floor === "1"}>
+            Needs floor{floorCount > 0 ? ` (${floorCount})` : ""}
+          </Chip>
+        ) : null}
       </div>
 
       {products.length === 0 ? (
@@ -161,8 +182,15 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
                     <p className="font-display font-semibold tabular">{aed(p.selling_price)}</p>
                     <p className="text-xs text-subtle tabular">cost {aed(p.cost_price)}</p>
                   </div>
-                  {p.boost_level > 0 || p.tags.length > 0 ? (
+                  {wantsFloor(p) || p.boost_level > 0 || p.tags.length > 0 ? (
                     <div className="flex flex-wrap items-center gap-1">
+                      {wantsFloor(p) ? (
+                        <span
+                          title="Thin margin and no minimum price set — when the assistant bargains on its own it can give away most of the profit on this one."
+                        >
+                          <Badge tone="warning">Needs floor</Badge>
+                        </span>
+                      ) : null}
                       {p.boost_level > 0 ? <Badge tone="violet">boost {p.boost_level}</Badge> : null}
                       {p.tags.slice(0, 2).map((t) => (
                         <Badge key={t} tone="neutral">

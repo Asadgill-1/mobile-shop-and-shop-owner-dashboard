@@ -33,7 +33,13 @@ export async function middleware(request: NextRequest) {
     url.search = "";
     return NextResponse.redirect(url);
   }
-  if (user && isLogin) {
+  // ...unless we sent them here BECAUSE they have no dashboard account. getScope() redirects a
+  // signed-in but unprovisioned user to /login?error=noaccess; bouncing them home would land on
+  // that same redirect again, forever — and `url.search = ""` would throw the explanation away
+  // too. Easy to hit on localhost, where this app and the platform console share the Supabase
+  // cookie (cookies ignore port), but the loop is the two rules disagreeing, not the cookie.
+  const noAccess = request.nextUrl.searchParams.get("error") === "noaccess";
+  if (user && isLogin && !noAccess) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     url.search = "";
