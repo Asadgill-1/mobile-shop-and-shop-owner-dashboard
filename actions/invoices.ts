@@ -1,12 +1,13 @@
 "use server";
 
 // Invoices for ONLINE orders (POS auto-invoices in actions/pos.ts).
-// orders.selling_price is the TOTAL gross; the customer paid selling_price − discount_amount.
+// orders.selling_price is the TOTAL gross and, like every stored price since 030, it is EX-VAT:
+// the customer paid (selling_price − discount_amount + delivery_fee) + 5%.
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { audit } from "@/lib/audit";
-import { vatFromInclusive } from "@/lib/money";
+import { vatOnNet } from "@/lib/money";
 import { dubaiDateISO } from "@/lib/period";
 import { invoiceRef, type InvoiceItem } from "@/lib/types";
 import type { ActionResult } from "./orders";
@@ -96,18 +97,26 @@ export async function createInvoiceFromOrder(
     }
   }
 
-  const productTotal = Number(order.selling_price) - Number(order.discount_amount || 0);
+  // Every stored figure is ex-VAT (030): gross → discount → taxable → +5% → what was collected.
+  // `total` must equal orders.cod_amount to the fil (orders/service.py::assign_delivery grosses up
+  // the same way), or the rider's reconciliation is short 5% on every delivery.
+  const gross = Number(order.selling_price);
+  const discount = Number(order.discount_amount || 0);
   const deliveryFee = Number(order.delivery_fee || 0);
-  const total = productTotal + deliveryFee; // grand total the customer paid, VAT-inclusive
+  const subtotal = Math.round((gross + deliveryFee - discount) * 100) / 100;
+  const vat = vatOnNet(subtotal);
+  const total = Math.round((subtotal + vat) * 100) / 100;
   const desc = p
     ? `${p.product_number ? `PR${String(p.product_number).padStart(4, "0")} · ` : ""}${p.brand} ${p.model}${p.color ? ` ${p.color}` : ""}`
     : `Order #${order.order_number}`;
+  // Lines carry the GROSS price, so they sum to the document's gross and the discount reads as
+  // its own line — the same shape the POS prints.
   const items: InvoiceItem[] = [
     {
       desc,
       qty,
-      unit_price: Math.round((productTotal / qty) * 100) / 100,
-      line_total: Math.round(productTotal * 100) / 100,
+      unit_price: Math.round((gross / qty) * 100) / 100,
+      line_total: Math.round(gross * 100) / 100,
       ...(cleanImeis.length > 0 ? { imeis: cleanImeis } : {}),
     },
   ];
@@ -119,8 +128,6 @@ export async function createInvoiceFromOrder(
   if (deliveryFee > 0) {
     items.push({ desc: "Home delivery", qty: 1, unit_price: deliveryFee, line_total: deliveryFee });
   }
-  const vat = vatFromInclusive(total);
-
   const { data: invNo, error: rpcErr } = await db.rpc("next_invoice_number", {
     p_shop: order.shop_id,
   });
@@ -144,7 +151,8 @@ export async function createInvoiceFromOrder(
       customer_phone: order.phone,
       customer_address: order.address,
       items,
-      subtotal: (total - vat).toFixed(2),
+      subtotal: subtotal.toFixed(2),
+      discount: discount.toFixed(2),
       vat_amount: vat.toFixed(2),
       total: total.toFixed(2),
       created_by: email,

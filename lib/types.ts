@@ -119,8 +119,10 @@ export interface CounterSaleRow {
   product_id: string;
   /** Negative = void reversal row (migration 022); sums net out. */
   quantity: number;
-  /** PER-UNIT price (unlike orders.selling_price which is the total). */
+  /** PER-UNIT price, BEFORE VAT and BEFORE the discount (unlike orders.selling_price, a total). */
   sold_price: string;
+  /** Giveaway on this line (030), mirroring orders.discount_amount. Negative on a void row. */
+  discount_amount: string;
   sold_on: string;
   discrepancy: boolean;
   sold_by: string | null;
@@ -161,12 +163,18 @@ export interface InvoiceRow {
   customer_address: string | null;
   customer_trn: string | null;
   items: InvoiceItem[];
+  /** Taxable amount — AFTER the discount, BEFORE VAT. What vat_amount is 5% of. */
   subtotal: string;
+  /** Ex-VAT giveaway shown on the document (030); gross ex-VAT = subtotal + discount. */
+  discount: string;
   vat_rate: string;
   vat_amount: string;
   total: string;
   issued_at: string;
   created_by: string;
+  /** Set on a tax credit note — the invoice it reverses (029). Amounts are negative. */
+  credit_of?: string | null;
+  reason?: string | null;
 }
 
 export interface StatusHistoryRow {
@@ -235,17 +243,22 @@ export function orderRef(
   return fallbackNumber ? `#${fallbackNumber}` : "—";
 }
 
-/** "INV-20-07-001" from (issued_at, invoices.day_seq) — migration 023 date-based display ref. */
+/** "INV-20-07-001" from (issued_at, invoices.day_seq) — migration 023 date-based display ref.
+ *  A credit note (029) carries the same sequence under a CRN- prefix, so the two can never be
+ *  mistaken for each other on a printed document. */
 export function invoiceRef(
   issuedAt: string | null,
   daySeq: number | null | undefined,
   fallbackNumber?: number | null,
+  isCredit = false,
 ): string {
+  const prefix = isCredit ? "CRN" : "INV";
   if (issuedAt && daySeq) {
     const { dd, mm } = dubaiDM(issuedAt);
-    return `INV-${dd}-${mm}-${String(daySeq).padStart(3, "0")}`;
+    return `${prefix}-${dd}-${mm}-${String(daySeq).padStart(3, "0")}`;
   }
-  return invoiceCode(fallbackNumber); // pre-023 invoices keep their INV-000042 code
+  // pre-023 invoices keep their INV-000042 code; a note that lost its day_seq still reads as one
+  return fallbackNumber ? `${prefix}-${String(fallbackNumber).padStart(6, "0")}` : "—";
 }
 
 /** Low-stock rule, mirroring the bot: explicit threshold wins; else the ≤2 heuristic. */

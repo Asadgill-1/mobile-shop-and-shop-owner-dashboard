@@ -13,7 +13,7 @@ import {
 import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { fmtDubai } from "@/lib/period";
-import { aed, num, orderNet } from "@/lib/money";
+import { aed, aed2, num, orderNet, withVat } from "@/lib/money";
 import { orderRef, type OrderRow, type StatusHistoryRow } from "@/lib/types";
 import { Badge, Card, PageHeader, SectionTitle, StatusPill } from "@/components/ui";
 import { DeliveryActions, type RiderOption } from "@/components/delivery-actions";
@@ -98,8 +98,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               </p>
             </div>
             <div>
-              <p className="text-xs text-subtle">Charge</p>
+              {/* Stored prices are ex-VAT (030); the customer pays this + 5%, which is also the
+                  COD the rider collects and the total on the invoice. */}
+              <p className="text-xs text-subtle">Charge (ex-VAT)</p>
               <p className="font-display font-semibold tabular text-accent-text">{aed(orderNet(order))}</p>
+              <p className="text-xs text-subtle">
+                {aed2(withVat(orderNet(order) + num(order.delivery_fee)))} incl. VAT
+              </p>
             </div>
           </div>
           <hr className="border-border" />

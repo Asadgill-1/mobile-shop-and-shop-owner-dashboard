@@ -5,6 +5,7 @@ import {
   Bike,
   ChartColumn,
   CreditCard,
+  Globe,
   Landmark,
   Package,
   Percent,
@@ -84,13 +85,35 @@ export default async function ReportsPage({
         </form>
       </div>
 
+      {/* Every card opens the rows it was summed from — a figure on this page is never a dead end.
+          The drill-down is not owner-gated: a keeper who cannot check their own day has to trust
+          the number instead of reading it. */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-        <StatCard label="Orders" value={profit.orders} icon={ChartColumn} tone="violet" />
-        <StatCard label="Revenue" value={aed(profit.revenue)} icon={Banknote} tone="accent" />
-        <StatCard label="Discounts" value={aed(profit.discounts)} icon={Tags} tone="warning" />
-        <StatCard label="Cost" value={aed(profit.cost)} icon={Package} tone="neutral" />
-        <StatCard label="Gross profit" value={aed(profit.profit)} icon={TrendingUp} tone="info" />
-        <StatCard label="Margin" value={`${profit.margin.toFixed(1)}%`} icon={Percent} tone="accent" />
+        <Drill view="all" period={period.key}>
+          <StatCard label="Orders" value={profit.orders} icon={ChartColumn} tone="violet" />
+        </Drill>
+        <Drill view="all" period={period.key}>
+          <StatCard label="Total sales" value={aed(profit.revenue)} icon={Banknote} tone="accent" />
+        </Drill>
+        {/* The channel split as its own pair of cards — every period filter above applies to them. */}
+        <Drill view="online" period={period.key}>
+          <StatCard label="Online sales" value={aed(profit.onlineRevenue)} icon={Globe} tone="info" />
+        </Drill>
+        <Drill view="counter" period={period.key}>
+          <StatCard label="Counter sales" value={aed(profit.counterRevenue)} icon={Store} tone="accent" />
+        </Drill>
+        <Drill view="discounts" period={period.key}>
+          <StatCard label="Discounts" value={aed(profit.discounts)} icon={Tags} tone="warning" />
+        </Drill>
+        <Drill view="all" period={period.key}>
+          <StatCard label="Cost" value={aed(profit.cost)} icon={Package} tone="neutral" />
+        </Drill>
+        <Drill view="all" period={period.key}>
+          <StatCard label="Gross profit" value={aed(profit.profit)} icon={TrendingUp} tone="info" />
+        </Drill>
+        <Drill view="all" period={period.key}>
+          <StatCard label="Margin" value={`${profit.margin.toFixed(1)}%`} icon={Percent} tone="accent" />
+        </Drill>
       </div>
 
       {profit.clearanceProfit !== 0 ? (
@@ -309,8 +332,14 @@ export default async function ReportsPage({
       <section className="flex flex-col gap-3">
         <SectionTitle>Also in this period</SectionTitle>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <StatCard label="VAT collected" value={aed(profit.vatCollected)} icon={Landmark} tone="info" />
-          <MaybeLink href={isOwner ? `/logs?view=cancels&period=${period.key}` : null}>
+          {/* The VAT is the sum of the documents, so the drill-down is the invoice list itself. */}
+          <MaybeLink href={`/invoices?period=${period.key}`}>
+            <StatCard label="VAT collected" value={aed(profit.vatCollected)} icon={Landmark} tone="info" />
+          </MaybeLink>
+          {/* Cancellations keep the owner's remarks feed; a keeper gets the cancelled orders list. */}
+          <MaybeLink
+            href={isOwner ? `/logs?view=cancels&period=${period.key}` : "/orders?status=cancelled"}
+          >
             <StatCard
               label={`Cancellations (${aed(profit.cancels.value)})`}
               value={profit.cancels.count}
@@ -318,25 +347,27 @@ export default async function ReportsPage({
               tone={profit.cancels.count > 0 ? "warning" : "neutral"}
             />
           </MaybeLink>
-          <MaybeLink href={isOwner ? `/logs?view=discounts&period=${period.key}` : null}>
+          <Drill view="discounts" period={period.key}>
             <StatCard
-              label={`Discounted orders (${aed(profit.discounts)})`}
+              label={`Discounted sales (${aed(profit.discounts)})`}
               value={profit.discountCount}
               icon={Tags}
               tone={profit.discountCount > 0 ? "warning" : "neutral"}
             />
-          </MaybeLink>
+          </Drill>
           {profit.deliveryCollected > 0 ? (
-            <StatCard
-              label={
-                profit.deliveryKept > 0
-                  ? `Delivery (shop ${aed(profit.deliveryCollected - profit.deliveryKept)} · riders ${aed(profit.deliveryKept)})`
-                  : "Delivery collected"
-              }
-              value={aed(profit.deliveryCollected)}
-              icon={Bike}
-              tone="accent"
-            />
+            <Drill view="online" period={period.key}>
+              <StatCard
+                label={
+                  profit.deliveryKept > 0
+                    ? `Delivery (shop ${aed(profit.deliveryCollected - profit.deliveryKept)} · riders ${aed(profit.deliveryKept)})`
+                    : "Delivery collected"
+                }
+                value={aed(profit.deliveryCollected)}
+                icon={Bike}
+                tone="accent"
+              />
+            </Drill>
           ) : null}
         </div>
       </section>
@@ -371,6 +402,23 @@ function SplitBar({
         </span>
       </div>
     </div>
+  );
+}
+
+/** A stat card that opens the rows behind it, carrying the period the reader is looking at. */
+function Drill({
+  view,
+  period,
+  children,
+}: {
+  view: "all" | "online" | "counter" | "discounts";
+  period: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link href={`/reports/sales?view=${view}&period=${period}`} className="pressable block">
+      {children}
+    </Link>
   );
 }
 

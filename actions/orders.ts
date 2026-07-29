@@ -15,9 +15,10 @@ import {
   notifyRider,
   shopForNotify,
 } from "@/lib/notify";
-import { num } from "@/lib/money";
+import { msgAed, num, withVat } from "@/lib/money";
 import { orderRef } from "@/lib/types";
 import { computeOffer, type OfferRow } from "@/lib/offers";
+import { issueCreditNote, invoiceForOrder } from "@/lib/credit-note";
 
 export type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
 
@@ -176,7 +177,11 @@ export async function confirmOrder(orderId: string, deliveryFee = 0): Promise<Ac
 
   const shop = await shopForNotify(draft.shop_id);
   const itemNet = num(draft.selling_price) - effDiscount;
-  const total = itemNet + effFee;
+  // Stored prices are ex-VAT (030); what the customer is told is what they pay. The grand total is
+  // grossed up as ONE amount and delivery is the remainder, so the parts always add to the total.
+  const total = withVat(itemNet + effFee);
+  const grossItem = withVat(itemNet);
+  const grossFee = Math.round((total - grossItem) * 100) / 100;
   const name =
     `${draft.products?.brand ?? ""} ${draft.products?.model ?? ""}`.trim() || "your order";
   const ref = orderRef(draft.created_at, draft.day_seq);
@@ -185,10 +190,11 @@ export async function confirmOrder(orderId: string, deliveryFee = 0): Promise<Ac
       shop,
       draft.phone,
       `✅ Order ${ref} confirmed!\n` +
-        `${draft.quantity}× ${name} — ${itemNet} AED` +
+        `${draft.quantity}× ${name} — ${msgAed(grossItem)} AED` +
         (applied.giftText ? `\n🎁 ${applied.giftText}` : "") +
-        (applied.freeDelivery ? `\nDelivery — FREE` : effFee > 0 ? `\nDelivery — ${effFee} AED` : "") +
-        (effFee > 0 || applied.freeDelivery ? `\nTotal — ${total} AED` : "") +
+        (applied.freeDelivery ? `\nDelivery — FREE` : effFee > 0 ? `\nDelivery — ${msgAed(grossFee)} AED` : "") +
+        (effFee > 0 || applied.freeDelivery ? `\nTotal — ${msgAed(total)} AED` : "") +
+        `\nAll prices include 5% VAT` +
         `\nDeliver to: ${draft.address}` +
         (draft.delivery_date ? `\nDelivery date: ${draft.delivery_date}` : "") +
         `\nThank you! 🙏`,
@@ -257,7 +263,9 @@ export async function assignDelivery(orderId: string, formData: FormData): Promi
   // COD = net product charge + delivery fee (rider collects the full amount). Rider-keeps split,
   // if the shop enables it, is settled at deliver/reconcile — not here (mirror assign_delivery).
   const fee = num(order.delivery_fee);
-  const cod = num(order.selling_price) - num(order.discount_amount) + fee;
+  // COD is real cash, so it carries the VAT the stored figures don't — and must equal the invoice
+  // total to the fil (actions/invoices.ts grosses up the same way).
+  const cod = withVat(num(order.selling_price) - num(order.discount_amount) + fee);
   await db
     .from("orders")
     .update({ rider_id: rider.id, cod_amount: String(cod), custody: "offered" })
@@ -329,14 +337,26 @@ export async function cancelOrder(orderId: string, formData: FormData): Promise<
     // stock was decremented at confirm — put it back (negative n increments)
     await decrementStock(order.shop_id, order.product_id, -order.quantity);
   }
+  // If it was already invoiced, the tax has to be reversed by a credit note — cancelling the order
+  // does not un-issue the document (FTA), and every report sums invoices.vat_amount.
+  const invoiceId = await invoiceForOrder(order.id);
+  let credited = "";
+  if (invoiceId) {
+    const note = await issueCreditNote(invoiceId, `Order cancelled: ${remarks}`, email);
+    if (!note.ok) return { ok: false, error: `Order cancelled, but ${note.error}` };
+    credited = ` Credit note ${note.ref} issued.`;
+    if (!note.skipped) await audit(email, "dcredit", order.shop_id, { args: [note.ref ?? ""] });
+  }
+
   await audit(email, "dash_cancel", order.shop_id, {
     args: [order.order_number],
     text: remarks,
   });
   revalidatePath("/orders");
   revalidatePath(`/orders/${order.id}`);
+  revalidatePath("/invoices");
   revalidatePath("/");
-  return { ok: true, message: `Order #${order.order_number} cancelled.` };
+  return { ok: true, message: `Order #${order.order_number} cancelled.${credited}` };
 }
 
 /** Manual order (PLAN §5.2): lands as a DRAFT so confirm/stock/notify reuse the one pipeline. */
@@ -457,7 +477,10 @@ export async function approvePrice(
     .update({ status: "approved", approved_price: String(price) })
     .eq("id", req.id);
   const shop = await shopForNotify(req.shop_id);
-  if (shop) await notifyCustomer(shop, req.phone, `Good news — we can do it for ${price} AED. 🙌`);
+  // The keeper approves in their own (ex-VAT) prices; the customer hears what they will pay.
+  if (shop) {
+    await notifyCustomer(shop, req.phone, `Good news — we can do it for ${msgAed(withVat(price))} AED. 🙌`);
+  }
   await audit(email, customPrice == null ? "kappr" : "kcust", req.shop_id, {
     args: [requestNumber],
   });
@@ -484,7 +507,7 @@ export async function denyPrice(requestNumber: number): Promise<ActionResult> {
     await notifyCustomer(
       shop,
       req.phone,
-      `${num(product.selling_price)} AED is the best price we can do on this one.`,
+      `${msgAed(withVat(num(product.selling_price)))} AED is the best price we can do on this one.`,
     );
   }
   await audit(email, "kdeny", req.shop_id, { args: [requestNumber] });

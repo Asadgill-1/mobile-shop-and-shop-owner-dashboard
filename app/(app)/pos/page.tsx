@@ -43,7 +43,7 @@ export default async function PosPage() {
       .eq("status", "in_stock"),
     db
       .from("counter_sales")
-      .select("id,quantity,sold_price,sold_by,payment_method,discrepancy,products(brand,model)")
+      .select("id,quantity,sold_price,discount_amount,sold_by,payment_method,discrepancy,products(brand,model)")
       .eq("shop_id", shopId)
       .eq("sold_on", dubaiDateISO())
       .order("created_at", { ascending: false }),
@@ -67,11 +67,15 @@ export default async function PosPage() {
   const today = (todayRows ?? []) as unknown as (CounterSaleRow & {
     products: { brand: string; model: string } | null;
   })[];
-  // Z-report-lite: net cash / card takings for the Dubai day (void rows are negative)
+  // Z-report-lite: what actually went in the drawer for the Dubai day (void rows are negative).
+  // counter_sales holds the ex-VAT price and the discount separately, but the customer handed over
+  // (price − discount) + 5% — the till has to show the money, not the revenue.
+  const taken = (r: (typeof today)[number]) =>
+    Math.round((Number(r.sold_price) * r.quantity - Number(r.discount_amount ?? 0)) * 105) / 100;
   let cashTotal = 0;
   let cardTotal = 0;
   for (const r of today) {
-    const amt = Number(r.sold_price) * r.quantity;
+    const amt = taken(r);
     if (r.payment_method === "card") cardTotal += amt;
     else cashTotal += amt; // bot photo-flow rows (null method) were cash counter sales by nature
   }
@@ -114,6 +118,9 @@ export default async function PosPage() {
                     </p>
                     <p className="text-xs text-subtle">
                       {r.payment_method ?? "cash"}
+                      {Number(r.discount_amount ?? 0) !== 0
+                        ? ` · ${aed(Math.abs(Number(r.discount_amount)))} off`
+                        : ""}
                       {r.sold_by?.startsWith("void:") ? " · reversal" : ""}
                       {r.discrepancy ? " · discrepancy" : ""}
                     </p>
@@ -127,7 +134,7 @@ export default async function PosPage() {
                       <VoidButton saleId={r.id} />
                     )}
                     <span className={`tabular font-semibold text-sm ${isVoid ? "text-destructive-text" : ""}`}>
-                      {aed(Number(r.sold_price) * r.quantity)}
+                      {aed(taken(r))}
                     </span>
                   </div>
                 </li>

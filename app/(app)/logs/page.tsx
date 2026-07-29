@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { Ban, Download, ScrollText, Tags } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
-import { fmtDubai, parsePeriod } from "@/lib/period";
+import { dubaiDateISO, fmtDubai, parsePeriod } from "@/lib/period";
 import { aed } from "@/lib/money";
 import { actorName, categoryOf, changeLines, humanize } from "@/lib/activity";
 import type { ActivityCategory } from "@/lib/activity";
@@ -53,6 +53,30 @@ interface DiscountRow {
   status: string;
   created_at: string;
   products: { brand: string; model: string } | null;
+}
+
+interface CounterDiscountRow {
+  id: string;
+  shop_id: string;
+  quantity: number;
+  sold_price: string;
+  discount_amount: string;
+  sold_by: string | null;
+  created_at: string;
+  products: { brand: string; model: string } | null;
+}
+
+/** One discounted sale, whichever channel gave the money away. */
+interface Giveaway {
+  key: string;
+  channel: "online" | "counter";
+  label: string;
+  gross: number;
+  discount: number;
+  at: string;
+  shopId: string;
+  note: string;
+  invoiceId: string | null;
 }
 
 /** Owner-only transparency feed: every shop action, price changes front and center (PLAN §5.9
@@ -157,7 +181,7 @@ export default async function LogsPage({
       ) : view === "cancels" ? (
         <Cancels ids={ids} period={period} names={names} shopName={shopName} />
       ) : (
-        <Discounts ids={ids} period={period} shopName={shopName} />
+        <Discounts ids={ids} period={period} names={names} shopName={shopName} />
       )}
     </>
   );
@@ -316,35 +340,92 @@ async function Cancels({
   );
 }
 
-/** Mirror of orders/service.py::discounted_orders — who gave money away, and how much. */
+/**
+ * Every discount the shop gave, both channels in one list: what the bot conceded while bargaining
+ * (orders.discount_amount) and what a keeper knocked off at the till (counter_sales.discount_amount,
+ * 030). Counter rows link to the tax invoice they were sold on where one exists.
+ *
+ * Mirror of orders/service.py::discounted_orders on the online half.
+ */
 async function Discounts({
   ids,
   period,
+  names,
   shopName,
 }: {
   ids: string[];
   period: { start: Date; end: Date };
+  names: Record<string, string>;
   shopName: Map<string, string>;
 }) {
-  const { data } = await db
-    .from("orders")
-    .select(
-      "id,shop_id,order_number,quantity,selling_price,discount_amount,status,created_at, products(brand,model)",
-    )
-    .in("shop_id", ids)
-    .neq("status", "draft")
-    .gt("discount_amount", 0)
-    .gte("created_at", period.start.toISOString())
-    .lt("created_at", period.end.toISOString())
-    .order("created_at", { ascending: false });
+  // sold_on is a DATE holding the Dubai day — comparing it to a UTC instant reads a day early.
+  const [ordersRes, counterRes, invRes] = await Promise.all([
+    db
+      .from("orders")
+      .select(
+        "id,shop_id,order_number,quantity,selling_price,discount_amount,status,created_at, products(brand,model)",
+      )
+      .in("shop_id", ids)
+      .neq("status", "draft")
+      .gt("discount_amount", 0)
+      .gte("created_at", period.start.toISOString())
+      .lt("created_at", period.end.toISOString())
+      .order("created_at", { ascending: false }),
+    db
+      .from("counter_sales")
+      .select("id,shop_id,quantity,sold_price,discount_amount,sold_by,created_at, products(brand,model)")
+      .in("shop_id", ids)
+      .gt("discount_amount", 0)
+      .gte("sold_on", dubaiDateISO(period.start))
+      .lt("sold_on", dubaiDateISO(period.end)),
+    db
+      .from("invoices")
+      .select("id,counter_sale_ids")
+      .in("shop_id", ids)
+      .eq("source", "counter")
+      .is("credit_of", null)
+      .gte("issued_at", period.start.toISOString())
+      .lt("issued_at", period.end.toISOString()),
+  ]);
 
-  const rows = (data ?? []) as unknown as DiscountRow[];
-  const total = rows.reduce((s, o) => s + Number(o.discount_amount), 0);
+  const invoiceOf = new Map<string, string>();
+  for (const inv of invRes.data ?? []) {
+    for (const saleId of inv.counter_sale_ids ?? []) invoiceOf.set(saleId, inv.id);
+  }
+
+  const online: Giveaway[] = ((ordersRes.data ?? []) as unknown as DiscountRow[]).map((o) => ({
+    key: `o${o.id}`,
+    channel: "online",
+    label: `#${o.order_number ?? "—"} · ${o.products?.brand ?? "?"} ${o.products?.model ?? "?"} ×${o.quantity}`,
+    gross: Number(o.selling_price),
+    discount: Number(o.discount_amount),
+    at: o.created_at,
+    shopId: o.shop_id,
+    note: o.status,
+    invoiceId: null,
+  }));
+  const counter: Giveaway[] = ((counterRes.data ?? []) as unknown as CounterDiscountRow[]).map((r) => ({
+    key: `c${r.id}`,
+    channel: "counter",
+    label: `${r.products?.brand ?? "?"} ${r.products?.model ?? "?"} ×${r.quantity}`,
+    gross: Number(r.sold_price) * r.quantity,
+    discount: Number(r.discount_amount),
+    at: r.created_at,
+    shopId: r.shop_id,
+    note: r.sold_by ? actorName(r.sold_by, names) : "counter",
+    invoiceId: invoiceOf.get(r.id) ?? null,
+  }));
+
+  const rows = [...online, ...counter].sort((a, b) => (a.at < b.at ? 1 : -1));
+  const total = rows.reduce((s, r) => s + r.discount, 0);
+  const counterTotal = counter.reduce((s, r) => s + r.discount, 0);
+
   return (
     <section className="flex flex-col gap-3">
       {rows.length > 0 ? (
         <SectionTitle>
-          {rows.length} discounted order(s) · {aed(total)} given away
+          {rows.length} discounted sale(s) · {aed(total)} given away · counter {aed(counterTotal)} ·
+          online {aed(total - counterTotal)}
         </SectionTitle>
       ) : null}
       <Card>
@@ -352,25 +433,42 @@ async function Discounts({
           <EmptyState icon={Tags} title="No discounts in this period" />
         ) : (
           <ul className="divide-y divide-border">
-            {rows.map((o) => (
-              <li key={o.id} className="px-4 py-3 flex items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold truncate">
-                    #{o.order_number ?? "—"} · {o.products?.brand} {o.products?.model} ×{o.quantity}
-                  </p>
-                  <p className="text-xs text-subtle">
-                    {fmtDubai(o.created_at)}
-                    {shopName.size > 1 ? ` · ${shopName.get(o.shop_id) ?? "—"}` : ""} · {o.status}
-                  </p>
-                </div>
-                <div className="text-right shrink-0">
-                  <p className="font-semibold tabular text-warning-text">
-                    −{aed(Number(o.discount_amount))}
-                  </p>
-                  <p className="text-xs text-subtle tabular">of {aed(Number(o.selling_price))}</p>
-                </div>
-              </li>
-            ))}
+            {rows.map((r) => {
+              const body = (
+                <>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold truncate">{r.label}</p>
+                    <p className="text-xs text-subtle">
+                      {fmtDubai(r.at)}
+                      {shopName.size > 1 ? ` · ${shopName.get(r.shopId) ?? "—"}` : ""} · {r.note}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <Badge tone={r.channel === "counter" ? "accent" : "info"}>
+                      {r.channel === "counter" ? "Counter sale" : "Online sale"}
+                    </Badge>
+                    <div className="text-right">
+                      <p className="font-semibold tabular text-warning-text">−{aed(r.discount)}</p>
+                      <p className="text-xs text-subtle tabular">of {aed(r.gross)}</p>
+                    </div>
+                  </div>
+                </>
+              );
+              return (
+                <li key={r.key}>
+                  {r.invoiceId ? (
+                    <Link
+                      href={`/invoices/${r.invoiceId}`}
+                      className="pressable flex items-center gap-3 px-4 py-3 hover:bg-muted"
+                    >
+                      {body}
+                    </Link>
+                  ) : (
+                    <div className="flex items-center gap-3 px-4 py-3">{body}</div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </Card>

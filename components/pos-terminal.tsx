@@ -15,11 +15,12 @@ import {
   ScanBarcode,
   Search,
   ShoppingCart,
+  Tags,
   Trash2,
   X,
 } from "lucide-react";
 import { checkoutSale, type CheckoutResult } from "@/actions/pos";
-import { aed } from "@/lib/money";
+import { aed, aed2, vatOnNet } from "@/lib/money";
 
 export interface PosProduct {
   id: string;
@@ -223,6 +224,7 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [payment, setPayment] = useState<"cash" | "card">("cash");
+  const [discount, setDiscount] = useState("");
   const [customer, setCustomer] = useState({ name: "", phone: "", address: "", trn: "" });
   const [showCustomer, setShowCustomer] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -275,7 +277,14 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
     setCart((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   };
 
-  const total = cart.reduce((s, l) => s + (Number(l.unitPrice) || 0) * l.quantity, 0);
+  // Prices are stored and typed BEFORE VAT — the 5% is added here, the same way actions/pos.ts
+  // computes it, so the button never promises a figure the server won't charge.
+  const gross = cart.reduce((s, l) => s + (Number(l.unitPrice) || 0) * l.quantity, 0);
+  const wanted = Math.max(0, Math.round((Number(discount) || 0) * 100) / 100);
+  const disc = Math.min(wanted, gross);
+  const subtotal = Math.round((gross - disc) * 100) / 100;
+  const vat = vatOnNet(subtotal);
+  const total = Math.round((subtotal + vat) * 100) / 100;
   const needsCustomer = total > FULL_INVOICE_THRESHOLD;
 
   const checkout = async () => {
@@ -288,6 +297,7 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
       customer_phone: customer.phone,
       customer_address: customer.address,
       customer_trn: customer.trn,
+      discount: disc,
       lines: cart.map((l) => ({
         product_id: l.product.id,
         quantity: l.quantity,
@@ -299,6 +309,7 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
     setResult(res);
     if (res.ok) {
       setCart([]);
+      setDiscount("");
       setCustomer({ name: "", phone: "", address: "", trn: "" });
       setShowCustomer(false);
       router.refresh(); // Today list below is server-rendered
@@ -421,7 +432,7 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
                     value={line.unitPrice}
                     inputMode="decimal"
                     onChange={(e) => patchLine(idx, { unitPrice: e.target.value })}
-                    aria-label="Unit price"
+                    aria-label="Unit price before VAT"
                     className={`${inputCls} w-full py-1.5 min-h-9 tabular text-sm`}
                   />
                 </label>
@@ -437,13 +448,55 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
             </div>
           ))}
 
+          {/* Discount — its own entry, and it lands on the sale row, the slip and the invoice, so
+              the owner can see where staff gave money away. */}
+          <div className="rounded-xl border border-border bg-background p-3 flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-3">
+              <label htmlFor="pos-discount" className="inline-flex items-center gap-2 font-semibold text-sm">
+                <Tags className="size-4.5 text-subtle" strokeWidth={2} aria-hidden />
+                Discount
+              </label>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-subtle font-semibold">AED</span>
+                <input
+                  id="pos-discount"
+                  value={discount}
+                  inputMode="decimal"
+                  onChange={(e) => setDiscount(e.target.value)}
+                  placeholder="0.00"
+                  className={`${inputCls} w-28 py-1.5 min-h-9 tabular text-sm text-right`}
+                />
+              </div>
+            </div>
+            {wanted > gross ? (
+              <p className="text-xs text-warning-text">
+                Capped at the sale value — {aed2(gross)}.
+              </p>
+            ) : (
+              <p className="text-xs text-subtle">Taken off before VAT, split across the items sold.</p>
+            )}
+          </div>
+
           {/* payment + customer + checkout */}
           <div className="rounded-xl border border-border bg-background p-3 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <p className="font-display text-lg font-semibold">Total</p>
-              <div className="text-right">
-                <p className="font-display text-2xl font-semibold tabular">{aed(total)}</p>
-                <p className="text-xs text-subtle">VAT 5% included</p>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-subtle">Subtotal (before VAT)</span>
+                <span className="tabular">{aed2(gross)}</span>
+              </div>
+              {disc > 0 && (
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-subtle">Discount</span>
+                  <span className="tabular font-semibold text-warning-text">−{aed2(disc)}</span>
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="text-subtle">VAT 5%</span>
+                <span className="tabular">{aed2(vat)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3 border-t border-border pt-2 mt-0.5">
+                <p className="font-display text-lg font-semibold">Total</p>
+                <p className="font-display text-2xl font-semibold tabular">{aed2(total)}</p>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -526,7 +579,7 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
               ) : (
                 <Banknote className="size-5" strokeWidth={2} aria-hidden />
               )}
-              Charge {aed(total)}
+              Charge {aed2(total)}
             </button>
           </div>
         </div>

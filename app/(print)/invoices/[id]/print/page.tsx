@@ -43,7 +43,30 @@ export default async function InvoicePrintPage({
     .single();
   const legalName = shop?.invoice_name || shop?.name || "";
   const slip = (format ?? (inv.source === "counter" ? "receipt" : "a4")) !== "a4";
-  const code = invoiceRef(inv.issued_at, inv.day_seq, inv.invoice_number);
+  const isCredit = !!inv.credit_of;
+  const code = invoiceRef(inv.issued_at, inv.day_seq, inv.invoice_number, isCredit);
+
+  // FTA: a credit note is its own document type and must reference the invoice it reverses.
+  const docTitle = isCredit ? "TAX CREDIT NOTE" : "TAX INVOICE";
+  const docTitleAr = isCredit ? "إشعار دائن ضريبي" : "فاتورة ضريبية";
+  // Which channel sold this — the printed document says so, not just the dashboard list.
+  const isCounter = inv.source === "counter";
+  const channel = isCounter ? "Counter sale · بيع مباشر" : "Online order · طلب أونلاين";
+  // Every price in this system is stored ex-VAT and the 5% is added on top (030), on both
+  // channels — the line items are net and the VAT row below them is the tax.
+  const vatNote = "Line prices exclude VAT · 5% added below · الأسعار غير شاملة الضريبة";
+  const discount = Number(inv.discount ?? 0);
+  const grossEx = Number(inv.subtotal) + discount; // gross before the giveaway, still ex-VAT
+  const credited = isCredit
+    ? await db
+        .from("invoices")
+        .select("invoice_number,day_seq,issued_at")
+        .eq("id", inv.credit_of!)
+        .maybeSingle()
+        .then(({ data }) =>
+          data ? invoiceRef(data.issued_at, data.day_seq, data.invoice_number) : null,
+        )
+    : null;
 
   const css = slip
     ? `
@@ -120,11 +143,14 @@ export default async function InvoicePrintPage({
             <hr />
             <div className="center">
               <strong>
-                TAX INVOICE <span className="ar">فاتورة ضريبية</span>
+                {docTitle} <span className="ar">{docTitleAr}</span>
               </strong>
               <div className="muted">
                 {code} · {dubaiStamp(inv.issued_at)}
               </div>
+              <div className="muted">{channel}</div>
+              {credited && <div className="muted">Reverses / يعكس: {credited}</div>}
+              {inv.reason && <div className="muted">Reason / السبب: {inv.reason}</div>}
               {inv.customer_name && <div className="muted">Customer / العميل: {inv.customer_name}</div>}
               {inv.customer_trn && <div className="muted">Customer TRN: {inv.customer_trn}</div>}
             </div>
@@ -154,6 +180,20 @@ export default async function InvoicePrintPage({
             <hr />
             <table>
               <tbody>
+                {/* Always present, 0.00 included: a reader must be able to see that nothing was
+                    discounted, not have to infer it from a missing line. */}
+                <tr>
+                  <td>
+                    Gross <span className="ar">الإجمالي قبل الخصم</span>
+                  </td>
+                  <td className="r">{fils(grossEx)}</td>
+                </tr>
+                <tr>
+                  <td>
+                    Discount <span className="ar">الخصم</span>
+                  </td>
+                  <td className="r">{discount === 0 ? fils(0) : `−${fils(Math.abs(discount))}`}</td>
+                </tr>
                 <tr>
                   <td>
                     Subtotal <span className="ar">قبل الضريبة</span>
@@ -176,7 +216,7 @@ export default async function InvoicePrintPage({
             </table>
             <hr />
             <div className="center muted">
-              Prices include 5% VAT · الأسعار شاملة ضريبة القيمة المضافة
+              {vatNote}
               <br />
               Thank you for your visit · شكراً لزيارتكم
             </div>
@@ -195,17 +235,32 @@ export default async function InvoicePrintPage({
               </div>
               <div className="meta">
                 <h1>
-                  TAX INVOICE
+                  {docTitle}
                   <br />
-                  <span className="ar">فاتورة ضريبية</span>
+                  <span className="ar">{docTitleAr}</span>
                 </h1>
                 <div className="muted">
                   {code}
                   <br />
+                  {channel}
+                  <br />
                   Date / التاريخ: {dubaiStamp(inv.issued_at)}
+                  {credited && (
+                    <>
+                      <br />
+                      Reverses / يعكس: {credited}
+                    </>
+                  )}
                 </div>
               </div>
             </div>
+
+            {inv.reason && (
+              <div className="block">
+                <strong>Reason / السبب</strong>
+                <div className="muted">{inv.reason}</div>
+              </div>
+            )}
 
             {(inv.customer_name || inv.customer_trn) && (
               <div className="block">
@@ -260,6 +315,15 @@ export default async function InvoicePrintPage({
 
             <table className="totals">
               <tbody>
+                {/* Always present, 0.00 included — see the slip layout above. */}
+                <tr>
+                  <td>Gross (excl. VAT) / الإجمالي قبل الخصم</td>
+                  <td className="r">{fils(grossEx)}</td>
+                </tr>
+                <tr>
+                  <td>Discount / الخصم</td>
+                  <td className="r">{discount === 0 ? fils(0) : `−${fils(Math.abs(discount))}`}</td>
+                </tr>
                 <tr>
                   <td>Subtotal (excl. VAT) / قبل الضريبة</td>
                   <td className="r">{fils(inv.subtotal)}</td>
@@ -276,7 +340,7 @@ export default async function InvoicePrintPage({
             </table>
 
             <div className="foot">
-              Prices include 5% VAT · الأسعار شاملة ضريبة القيمة المضافة
+              {vatNote}
               <br />
               Thank you for your business · شكراً لتعاملكم معنا
             </div>

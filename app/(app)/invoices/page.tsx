@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { parsePeriod } from "@/lib/period";
 import { fmtDubai } from "@/lib/period";
-import { aed2 } from "@/lib/money";
+import { aed2, withVat } from "@/lib/money";
 import { invoiceRef, orderRef, type InvoiceRow } from "@/lib/types";
 import { Badge, Card, EmptyState, PageHeader, SectionTitle, StatCard } from "@/components/ui";
 import { CreateInvoiceButton } from "@/components/create-invoice-button";
@@ -30,7 +30,7 @@ export default async function InvoicesPage({
   const [{ data: invRows }, { data: uninvoiced }] = await Promise.all([
     db
       .from("invoices")
-      .select("id,shop_id,invoice_number,day_seq,source,customer_name,total,vat_amount,issued_at")
+      .select("id,shop_id,invoice_number,day_seq,source,customer_name,total,vat_amount,issued_at,credit_of")
       .in("shop_id", ids)
       .gte("issued_at", period.start.toISOString())
       .lt("issued_at", period.end.toISOString())
@@ -48,8 +48,10 @@ export default async function InvoicesPage({
 
   const invoices = (invRows ?? []) as Pick<
     InvoiceRow,
-    "id" | "shop_id" | "invoice_number" | "day_seq" | "source" | "customer_name" | "total" | "vat_amount" | "issued_at"
+    "id" | "shop_id" | "invoice_number" | "day_seq" | "source" | "customer_name" | "total" | "vat_amount" | "issued_at" | "credit_of"
   >[];
+  // Credit notes carry negative amounts, so both totals net out on a plain sum — the VAT line is
+  // what the shop actually owes for the period, reversals included.
   const totalSum = invoices.reduce((s, r) => s + Number(r.total), 0);
   const vatSum = invoices.reduce((s, r) => s + Number(r.vat_amount), 0);
   const shopName = (id: string) => scope.shops.find((s) => s.id === id)?.name;
@@ -112,7 +114,7 @@ export default async function InvoicesPage({
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-semibold tabular">
-                      {invoiceRef(inv.issued_at, inv.day_seq, inv.invoice_number)}
+                      {invoiceRef(inv.issued_at, inv.day_seq, inv.invoice_number, !!inv.credit_of)}
                       <span className="font-normal text-subtle"> · {inv.customer_name || "walk-in"}</span>
                     </p>
                     <p className="text-xs text-subtle">
@@ -120,10 +122,15 @@ export default async function InvoicesPage({
                       {scope.activeShopId ? "" : ` · ${shopName(inv.shop_id) ?? ""}`}
                     </p>
                   </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <Badge tone={inv.source === "counter" ? "accent" : "info"}>
-                      {inv.source === "counter" ? "POS" : "Order"}
-                    </Badge>
+                  <div className="flex items-center gap-2.5 shrink-0">
+                    {/* Which channel sold it, on every document — a credit note keeps its channel
+                        badge too, or the reversal would lose the only clue where it came from. */}
+                    <span className="flex flex-wrap justify-end gap-1">
+                      <Badge tone={inv.source === "counter" ? "accent" : "info"}>
+                        {inv.source === "counter" ? "Counter sale" : "Online sale"}
+                      </Badge>
+                      {inv.credit_of ? <Badge tone="destructive">Credit note</Badge> : null}
+                    </span>
                     <span className="tabular font-semibold text-sm">{aed2(inv.total)}</span>
                     <Printer className="size-4 text-subtle" strokeWidth={2} aria-hidden />
                   </div>
@@ -147,7 +154,8 @@ export default async function InvoicesPage({
                     </p>
                     <p className="text-xs text-subtle">
                       delivered {fmtDubai(o.delivered_at)} ·{" "}
-                      {aed2(Number(o.selling_price) - Number(o.discount_amount || 0))}
+                      {/* what the invoice will total: stored prices are ex-VAT (030) */}
+                      {aed2(withVat(Number(o.selling_price) - Number(o.discount_amount || 0)))}
                     </p>
                   </div>
                   <CreateInvoiceButton

@@ -29,6 +29,7 @@ const T: Record<string, string> = {
   // dashboard
   dcsale: "recorded a counter sale of {0} item(s)", dvoid: "voided counter sale {0}",
   dinv: "issued invoice INV-{0}",
+  dcredit: "issued credit note {0}",
   dreply: "replied to customer {0} from the dashboard",
   dhandover: "returned customer {0} to the AI",
   dedit: "edited product #{0}: {1}",
@@ -95,7 +96,7 @@ for (const a of [
   "dash_product_new", "dash_product_edit", "dash_product_delete", "dash_stock_adj", "dash_media",
   "dash_offer_new", "dash_offer_off",
 ]) CATEGORY_OF[a] = "products";
-for (const a of ["dcsale", "dvoid", "dinv", "counter_sale", "ksheet", "countersheet_cmd"])
+for (const a of ["dcsale", "dvoid", "dinv", "dcredit", "counter_sale", "ksheet", "countersheet_cmd"])
   CATEGORY_OF[a] = "pos";
 for (const a of ["dreply", "dhandover"]) CATEGORY_OF[a] = "chats";
 

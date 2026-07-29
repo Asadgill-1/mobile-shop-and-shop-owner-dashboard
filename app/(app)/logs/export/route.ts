@@ -2,7 +2,7 @@
 // the dashboard reads the DB directly and streams the file itself (PLAN §3.3 replacement).
 import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
-import { fmtDubai, parsePeriod } from "@/lib/period";
+import { dubaiDateISO, fmtDubai, parsePeriod } from "@/lib/period";
 import { actorName, changeLines, humanize } from "@/lib/activity";
 import { csvResponse, toCsv } from "@/lib/csv";
 import { audit } from "@/lib/audit";
@@ -47,27 +47,46 @@ export async function GET(req: Request): Promise<Response> {
       }),
     );
   } else if (view === "discounts") {
-    const { data } = await db
-      .from("orders")
-      .select("shop_id,order_number,quantity,selling_price,discount_amount,status,created_at, products(brand,model)")
-      .in("shop_id", ids).neq("status", "draft").gt("discount_amount", 0)
-      .gte("created_at", start).lt("created_at", end)
-      .order("created_at", { ascending: false });
+    // Both channels, same as the page: the bot's bargaining and the till's knock-offs (030).
+    const [ordersRes, counterRes] = await Promise.all([
+      db
+        .from("orders")
+        .select("shop_id,order_number,quantity,selling_price,discount_amount,status,created_at, products(brand,model)")
+        .in("shop_id", ids).neq("status", "draft").gt("discount_amount", 0)
+        .gte("created_at", start).lt("created_at", end),
+      db
+        .from("counter_sales")
+        .select("shop_id,quantity,sold_price,discount_amount,sold_by,created_at, products(brand,model)")
+        .in("shop_id", ids).gt("discount_amount", 0)
+        .gte("sold_on", dubaiDateISO(period.start)).lt("sold_on", dubaiDateISO(period.end)),
+    ]);
     interface Row {
       shop_id: string; order_number: number | null; quantity: number; selling_price: string;
       discount_amount: string; status: string; created_at: string;
       products: { brand: string; model: string } | null;
     }
+    interface CRow {
+      shop_id: string; quantity: number; sold_price: string; discount_amount: string;
+      sold_by: string | null; created_at: string;
+      products: { brand: string; model: string } | null;
+    }
+    const label = (p: { brand: string; model: string } | null) =>
+      `${p?.brand ?? ""} ${p?.model ?? ""}`.trim();
+    const rows: (string | number | null)[][] = [
+      ...((ordersRes.data ?? []) as unknown as Row[]).map((o) => [
+        o.created_at, "Online sale", shopName.get(o.shop_id) ?? "", String(o.order_number ?? ""),
+        label(o.products), o.quantity, o.selling_price, o.discount_amount, o.status,
+      ]),
+      ...((counterRes.data ?? []) as unknown as CRow[]).map((r) => [
+        r.created_at, "Counter sale", shopName.get(r.shop_id) ?? "", "",
+        label(r.products), r.quantity,
+        (Number(r.sold_price) * r.quantity).toFixed(2), r.discount_amount,
+        r.sold_by ?? "counter",
+      ]),
+    ].sort((a, b) => (String(a[0]) < String(b[0]) ? 1 : -1));
     csv = toCsv(
-      ["Time (Dubai)", "Shop", "Order", "Product", "Qty", "Total AED", "Discount AED", "Status"],
-      ((data ?? []) as unknown as Row[]).map((o) => {
-        const p = o.products;
-        return [
-          fmtDubai(o.created_at), shopName.get(o.shop_id) ?? "", o.order_number,
-          `${p?.brand ?? ""} ${p?.model ?? ""}`.trim(), o.quantity,
-          o.selling_price, o.discount_amount, o.status,
-        ];
-      }),
+      ["Time (Dubai)", "Channel", "Shop", "Order", "Product", "Qty", "Total AED", "Discount AED", "Status / by"],
+      rows.map(([at, ...rest]) => [fmtDubai(String(at)), ...rest]),
     );
   } else {
     const [logsRes, keepersRes, ridersRes] = await Promise.all([
