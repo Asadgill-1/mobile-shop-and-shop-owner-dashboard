@@ -10,6 +10,7 @@ import { audit } from "@/lib/audit";
 import { vatOnNet } from "@/lib/money";
 import { dubaiDateISO } from "@/lib/period";
 import { invoiceRef, type InvoiceItem } from "@/lib/types";
+import { invoiceIdentityError } from "@/lib/invoice-identity";
 import type { ActionResult } from "./orders";
 
 export type InvoiceActionResult = ActionResult & { invoiceId?: string };
@@ -43,6 +44,11 @@ export async function createInvoiceFromOrder(
     .eq("order_id", order.id)
     .maybeSingle();
   if (existing) return { ok: true, message: "Already invoiced.", invoiceId: existing.id };
+
+  // Checked AFTER the already-invoiced lookup on purpose: a shop that loses its TRN must still be
+  // able to retrieve an invoice it already issued — this blocks new ones, it doesn't hide old ones.
+  const identityErr = await invoiceIdentityError(order.shop_id);
+  if (identityErr) return { ok: false, error: identityErr };
 
   const p = (Array.isArray(order.products) ? order.products[0] : order.products) as {
     brand: string;

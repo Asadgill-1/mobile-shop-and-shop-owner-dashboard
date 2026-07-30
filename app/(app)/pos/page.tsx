@@ -43,7 +43,7 @@ export default async function PosPage() {
       .eq("status", "in_stock"),
     db
       .from("counter_sales")
-      .select("id,quantity,sold_price,discount_amount,sold_by,payment_method,discrepancy,products(brand,model)")
+      .select("id,quantity,sold_price,discount_amount,sold_by,payment_method,payment_ref,discrepancy,products(brand,model)")
       .eq("shop_id", shopId)
       .eq("sold_on", dubaiDateISO())
       .order("created_at", { ascending: false }),
@@ -118,6 +118,7 @@ export default async function PosPage() {
                     </p>
                     <p className="text-xs text-subtle">
                       {r.payment_method ?? "cash"}
+                      {r.payment_ref ? ` · ref ${r.payment_ref}` : ""}
                       {Number(r.discount_amount ?? 0) !== 0
                         ? ` · ${aed(Math.abs(Number(r.discount_amount)))} off`
                         : ""}

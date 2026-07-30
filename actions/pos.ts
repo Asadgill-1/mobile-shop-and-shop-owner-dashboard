@@ -10,8 +10,9 @@ import { audit } from "@/lib/audit";
 import { notifyLowStock, shopForNotify } from "@/lib/notify";
 import { dubaiDateISO } from "@/lib/period";
 import { allocateDiscount, vatOnNet } from "@/lib/money";
-import { invoiceRef, productCode, type InvoiceItem } from "@/lib/types";
+import { invoiceRef, paymentRefError, productCode, type InvoiceItem } from "@/lib/types";
 import { issueCreditNote, invoiceForCounterSale } from "@/lib/credit-note";
+import { invoiceIdentityError } from "@/lib/invoice-identity";
 import type { ActionResult } from "./orders";
 
 /** FTA: above this a full tax invoice (customer name + address) is required. */
@@ -29,6 +30,8 @@ export interface CartLine {
 export interface CheckoutInput {
   shop_id: string;
   payment_method: "cash" | "card";
+  /** Acquirer approval / reference from the terminal slip. Required for card (031). */
+  payment_ref?: string;
   customer_name?: string;
   customer_phone?: string;
   customer_address?: string;
@@ -57,7 +60,16 @@ export async function checkoutSale(input: CheckoutInput): Promise<CheckoutResult
   if (!["cash", "card"].includes(input.payment_method)) {
     return { ok: false, error: "Pick cash or card." };
   }
+  // A card sale with no acquirer reference can't be matched to a settlement line later.
+  const paymentRef = (input.payment_ref ?? "").trim();
+  const refErr = paymentRefError(input.payment_method, paymentRef);
+  if (refErr) return { ok: false, error: refErr };
   if (!input.lines?.length) return { ok: false, error: "The cart is empty." };
+  // Every checkout issues a tax invoice, so a shop with no TRN is refused at the till rather than
+  // after the goods have walked: recording the stock movement and then failing to produce a legal
+  // invoice is the worse of the two failures.
+  const identityErr = await invoiceIdentityError(shopId);
+  if (identityErr) return { ok: false, error: identityErr };
 
   // --- validate lines against real products (tenant-guarded) ---
   const { data: prods } = await db
@@ -165,6 +177,7 @@ export async function checkoutSale(input: CheckoutInput): Promise<CheckoutResult
         sold_on: soldOn,
         sold_by: email,
         payment_method: input.payment_method,
+        payment_ref: paymentRef || null,
         discrepancy: false,
       })),
     )
@@ -267,7 +280,7 @@ export async function voidSale(counterSaleId: string): Promise<ActionResult> {
 
   const { data: sale } = await db
     .from("counter_sales")
-    .select("id,shop_id,product_id,quantity,sold_price,discount_amount,payment_method")
+    .select("id,shop_id,product_id,quantity,sold_price,discount_amount,payment_method,payment_ref")
     .eq("id", counterSaleId)
     .in("shop_id", scope.shopIds)
     .maybeSingle();
@@ -295,6 +308,8 @@ export async function voidSale(counterSaleId: string): Promise<ActionResult> {
     // Carry the original tender: the reversal has to land in the SAME payment bucket it came from,
     // or the cash/card split keeps the sale's cash and files the refund under "unspecified".
     payment_method: sale.payment_method,
+    // ...and the reference with it, so the refund can be traced to the same terminal transaction.
+    payment_ref: sale.payment_ref ?? null,
     discrepancy: false,
   });
   if (error) return { ok: false, error: "Could not void the sale." };

@@ -127,6 +127,8 @@ export interface CounterSaleRow {
   discrepancy: boolean;
   sold_by: string | null;
   payment_method: "cash" | "card" | null;
+  /** Acquirer reference for a card payment (031). Null on cash; a void inherits the sale's. */
+  payment_ref?: string | null;
   products?: ProductJoin | null;
 }
 
@@ -259,6 +261,48 @@ export function invoiceRef(
   }
   // pre-023 invoices keep their INV-000042 code; a note that lost its day_seq still reads as one
   return fallbackNumber ? `${prefix}-${String(fallbackNumber).padStart(6, "0")}` : "—";
+}
+
+/* ---------------- card payment reference (031) ---------------- */
+
+export const PAYMENT_REF_MAX = 40;
+
+/** 13–19 digits passing Luhn — i.e. the card number itself, not a reference. */
+function looksLikePan(s: string): boolean {
+  const d = s.replace(/\D/g, "");
+  if (d.length < 13 || d.length > 19) return false;
+  let sum = 0;
+  let dbl = false;
+  for (let i = d.length - 1; i >= 0; i--) {
+    let n = d.charCodeAt(i) - 48;
+    if (dbl) {
+      n *= 2;
+      if (n > 9) n -= 9;
+    }
+    sum += n;
+    dbl = !dbl;
+  }
+  return sum % 10 === 0;
+}
+
+/**
+ * Validate the reference typed at the till for a card sale. Returns the message to show, or null.
+ * Shared by the terminal and the server action so the button and the write agree.
+ *
+ * Cash needs none. A full card number is refused outright: storing a PAN is a PCI incident, and an
+ * unvalidated free-text box beside a card machine is exactly where one gets typed. The Luhn window
+ * starts at 13 digits so a 12-digit RRN and a 6-digit approval code still pass.
+ */
+export function paymentRefError(method: "cash" | "card", ref: string): string | null {
+  if (method !== "card") return null;
+  const v = ref.trim();
+  if (!v) return "Enter the transaction / approval number from the card terminal receipt.";
+  if (v.length > PAYMENT_REF_MAX) return `Transaction number is too long (max ${PAYMENT_REF_MAX}).`;
+  if (!/^[A-Za-z0-9 /-]+$/.test(v)) return "Transaction number: letters, digits, space, - and / only.";
+  if (looksLikePan(v)) {
+    return "That looks like a card number. Enter the approval / reference code from the receipt, never the card number.";
+  }
+  return null;
 }
 
 /** Low-stock rule, mirroring the bot: explicit threshold wins; else the ≤2 heuristic. */

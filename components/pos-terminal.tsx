@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { checkoutSale, type CheckoutResult } from "@/actions/pos";
 import { aed, aed2, vatOnNet } from "@/lib/money";
+import { PAYMENT_REF_MAX } from "@/lib/types";
 
 export interface PosProduct {
   id: string;
@@ -224,6 +225,7 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
   const [query, setQuery] = useState("");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [payment, setPayment] = useState<"cash" | "card">("cash");
+  const [paymentRef, setPaymentRef] = useState("");
   const [discount, setDiscount] = useState("");
   const [customer, setCustomer] = useState({ name: "", phone: "", address: "", trn: "" });
   const [showCustomer, setShowCustomer] = useState(false);
@@ -293,6 +295,7 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
     const res = await checkoutSale({
       shop_id: shopId,
       payment_method: payment,
+      payment_ref: paymentRef,
       customer_name: customer.name,
       customer_phone: customer.phone,
       customer_address: customer.address,
@@ -310,6 +313,8 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
     if (res.ok) {
       setCart([]);
       setDiscount("");
+      setPaymentRef(""); // never carry one sale's approval code onto the next
+
       setCustomer({ name: "", phone: "", address: "", trn: "" });
       setShowCustomer(false);
       router.refresh(); // Today list below is server-rendered
@@ -521,6 +526,27 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
                 </button>
               ))}
             </div>
+
+            {payment === "card" && (
+              <div className="flex flex-col gap-1">
+                <label htmlFor="payment-ref" className="text-xs font-semibold text-subtle">
+                  Card transaction no.
+                </label>
+                <input
+                  id="payment-ref"
+                  value={paymentRef}
+                  onChange={(e) => setPaymentRef(e.target.value)}
+                  maxLength={PAYMENT_REF_MAX}
+                  autoComplete="off"
+                  inputMode="text"
+                  placeholder="Approval / reference from the terminal slip"
+                  className={inputCls}
+                />
+                <p className="text-xs text-subtle">
+                  From the card machine receipt — never the card number.
+                </p>
+              </div>
+            )}
 
             {(showCustomer || needsCustomer) && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

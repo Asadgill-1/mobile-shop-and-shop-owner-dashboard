@@ -68,6 +68,25 @@ export default async function InvoicePrintPage({
         )
     : null;
 
+  // How it was paid, printed on the document. A card slip without the acquirer's approval code
+  // cannot be matched to a settlement line, which is the whole reason the till captures it (031).
+  let paidLine: string | null = null;
+  if (isCounter && Array.isArray(inv.counter_sale_ids) && inv.counter_sale_ids.length > 0) {
+    const { data: paid } = await db
+      .from("counter_sales")
+      .select("payment_method,payment_ref")
+      .in("id", inv.counter_sale_ids)
+      .limit(1);
+    const method = paid?.[0]?.payment_method;
+    if (method) {
+      const ref = paid[0].payment_ref;
+      paidLine =
+        method === "card"
+          ? `Paid by card${ref ? ` · ref ${ref}` : ""} \\ الدفع بالبطاقة`
+          : "Paid in cash \\ الدفع نقداً";
+    }
+  }
+
   const css = slip
     ? `
       @page { size: 80mm auto; margin: 4mm; }
@@ -150,6 +169,7 @@ export default async function InvoicePrintPage({
               </div>
               <div className="muted">{channel}</div>
               {credited && <div className="muted">Reverses / يعكس: {credited}</div>}
+              {paidLine && <div className="muted">{paidLine}</div>}
               {inv.reason && <div className="muted">Reason / السبب: {inv.reason}</div>}
               {inv.customer_name && <div className="muted">Customer / العميل: {inv.customer_name}</div>}
               {inv.customer_trn && <div className="muted">Customer TRN: {inv.customer_trn}</div>}
@@ -249,6 +269,12 @@ export default async function InvoicePrintPage({
                     <>
                       <br />
                       Reverses / يعكس: {credited}
+                    </>
+                  )}
+                  {paidLine && (
+                    <>
+                      <br />
+                      {paidLine}
                     </>
                   )}
                 </div>

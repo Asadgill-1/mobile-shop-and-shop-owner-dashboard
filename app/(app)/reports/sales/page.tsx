@@ -73,7 +73,7 @@ export default async function SalesBreakdownPage({
       ? { data: [] }
       : db
           .from("counter_sales")
-          .select("id,shop_id,created_at,quantity,sold_price,discount_amount,discrepancy,payment_method,sold_by, products(brand,model,cost_price)")
+          .select("id,shop_id,created_at,quantity,sold_price,discount_amount,discrepancy,payment_method,payment_ref,sold_by, products(brand,model,cost_price)")
           .in("shop_id", ids)
           .gte("sold_on", dubaiDateISO(period.start))
           .lt("sold_on", dubaiDateISO(period.end)),
@@ -88,6 +88,7 @@ export default async function SalesBreakdownPage({
   interface CounterRow {
     id: string; shop_id: string; created_at: string; quantity: number; sold_price: string;
     discount_amount: string; discrepancy: boolean; payment_method: string | null;
+    payment_ref: string | null;
     sold_by: string | null;
     products: { brand: string; model: string; cost_price: string } | null;
   }
@@ -151,7 +152,7 @@ export default async function SalesBreakdownPage({
       profit: gross - discount - cost,
       at: r.created_at,
       shopId: r.shop_id,
-      note: r.payment_method ?? "cash",
+      note: (r.payment_method ?? "cash") + (r.payment_ref ? ` · ref ${r.payment_ref}` : ""),
       invoiceId: invoiceOf.get(r.id) ?? null,
     };
   });

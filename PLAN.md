@@ -180,16 +180,39 @@ Shipped schema (migration 022): `shops.trn/invoice_name/invoice_address`; `invoi
 **per-shop sequential numbering** via `invoice_counters` + `next_invoice_number(p_shop)` RPC
 (`unique(shop_id, invoice_number)` — a global identity would leak cross-tenant gaps), plus
 `customer_address`, `customer_trn` (B2B input-VAT recovery), items jsonb carries `imeis[]`.
+**Migration 030** adds `invoices.discount` (the ex-VAT giveaway, shown on its own line — always
+printed, `0.00` included, so a reader sees that nothing was discounted rather than inferring it
+from an absent line). **Migration 029** adds `invoices.credit_of`/`reason` (see below).
 
-- VAT-inclusive retail: `vatFromInclusive` in `money.ts` computes `total × 5/105` in integer fils.
-- `> AED 10,000` checkout requires customer name + address (full-invoice branch, enforced server-side).
+- **Prices are stored and typed BEFORE VAT** (migration 030, corrected from the original
+  VAT-inclusive assumption — a shop typing a retail price was having 5% carved out of its own
+  margin instead of charged on top). `vatOnNet` in `money.ts` adds 5% to a net amount; the mirror
+  Python helper is `src/app/utils/vat.py::with_vat`. `vatFromInclusive` still exists — it is what a
+  credit note uses to negate an already-issued (VAT-inclusive) total, and what the backend uses to
+  convert a customer-named haggle price back to net.
+- `> AED 10,000` checkout requires customer name + address (full-invoice branch, enforced
+  server-side, checked against the VAT-inclusive total the customer actually pays).
+- **Tax credit notes** (migration 029): a void or a cancel-after-invoice no longer leaves its
+  output VAT standing — `lib/credit-note.ts::issueCreditNote` reverses the original with a
+  negative-amount `invoices` row (`credit_of` set, unique per original), idempotent, prints as
+  "TAX CREDIT NOTE / إشعار دائن ضريبي" referencing the invoice it reverses. FTA rule: a reversed
+  supply is credited, never erased.
+- **POS discount** (migration 030): a cart-level giveaway is split across the sale rows in whole
+  fils (`allocateDiscount`) so `counter_sales.discount_amount` carries each line's share — "who
+  discounted what" is answerable per product, and a void carries the negative share so a reversed
+  discount stops counting as money given away.
+- **Channel badge** ("Counter sale" / "Online sale") on the invoice list AND the printed document
+  — a credit note keeps its channel badge too, or the reversal loses the only clue where it came
+  from.
 - Rendering `/invoices/[id]/print` (route group `(print)` — no app chrome): **bilingual AR/EN**
   ("TAX INVOICE فاتورة ضريبية", TRN رقم التسجيل الضريبي, RTL spans), **two paper formats** —
   **80mm thermal slip** (POS default) and **A4** (`?format=`), auto `window.print()`, browser
-  print/save-PDF. Screen-only warning banner while the shop's TRN is missing.
+  print/save-PDF. Screen-only warning banner while the shop's TRN is missing. Every document shows
+  Gross → Discount → Subtotal → VAT → Total, in that order, whether or not a discount applied.
 - Views: list (period chips + totals + VAT collected), detail, create-from-order for delivered
-  orders (careful: `orders.selling_price` is TOTAL gross; invoice total = selling − discount),
-  auto-create at POS checkout (DET: every sale gets a receipt).
+  orders (careful: `orders.selling_price` is TOTAL gross ex-VAT; invoice subtotal = selling −
+  discount + delivery_fee, total = subtotal + 5% VAT), auto-create at POS checkout (DET: every
+  sale gets a receipt).
 - Settings: per-shop TRN (15-digit check) / legal name / address form feeding the template.
 
 ### 5.6 Chats (Telegram now, WhatsApp at Stage 13 — same table)
@@ -218,7 +241,10 @@ Shipped schema (migration 022): `shops.trn/invoice_name/invoice_address`; `invoi
 | View | Backend reference | Status |
 |---|---|---|
 | Profit dashboard (today/yesterday/weekly/monthly/custom): revenue, discounts, cost, gross profit, margin %, top-5 products, clearance candidates — with charts | mirror `profit_summary` + `format_profit` math | exists |
-| Include-counter-sales toggle | adds `counter_sales` to revenue/cost query (dashboard-side only; Python untouched) | **NEW** (query only) |
+| Counter sales folded into every figure (not a toggle) | `lib/profit-math.ts::aggregate` merges `counter_sales` unconditionally, same as the Python `merge_counter` | exists |
+| **Online sales / Counter sales cards** | `profit.onlineRevenue` / `profit.counterRevenue` | ✅ NEW |
+| **Every card opens `/reports/sales?view=…`** — the actual rows a headline was summed from, both channels, revenue/discount/cost/profit per row, linked to its invoice; own totals restate the card (a void is a row but not a sale) | new `app/(app)/reports/sales/page.tsx`; not owner-gated — a keeper can check their own day too | ✅ NEW |
+| Discounts (both channels: bot bargaining + POS knock-off) | `profit.discounts`/`discountCount` sums `orders.discount_amount` + `counter_sales.discount_amount` | ✅ NEW |
 | Top products | from profit logic | exists |
 | COD outstanding | as §5.7 | exists |
 | Exports hub | all bridge export buttons + links | exists via bridge |
@@ -283,6 +309,9 @@ originally planned (021 went to the AI-relay fix before invoices, since that was
 | `020_dashboard_users.sql` | auth mapping table (§3.2) |
 | `021_message_relay.sql` | `messages.relay_pending` — closes the Redis-relay gap (§8 below), not part of the original plan |
 | `022_pos_invoices.sql` | `products.barcode`, `counter_sales` void/dashboard-writer columns, `product_units` (IMEI ledger), `shops` TRN fields, `invoices` + `invoice_counters` + `next_invoice_number` RPC (§5.4/§5.5) |
+| `029_credit_notes.sql` | `invoices.credit_of`/`reason` + a unique index (one credit note per original) + a sign-check constraint (§5.5) |
+| `030_pos_vat_discount.sql` | `counter_sales.discount_amount`, `invoices.discount` — VAT itself needed no column, only the arithmetic changed (§5.5) |
+| `031_pos_payment_ref.sql` | `counter_sales.payment_ref` — the acquirer reference a card sale reconciles against, required at the till, `NOT VALID` + reversal-exempt CHECK (§5.4) |
 
 ## 8. Python backend changes (minimal; bots untouched)
 1. **AI-relay drain (done, migration 021)** — `escalations/context.py::sync_relay` pulls
@@ -305,6 +334,7 @@ originally planned (021 went to the AI-relay fix before invoices, since that was
   - **Shop offers** — an Offers card on the product page (`actions/offers.ts`, `components/offer-manager.tsx`): 6 types, one active per product. Stock-linked free gift decrements the gift + prints a 0.00 invoice line via `orders.applied_offer`. Auto-applied at `confirmOrder` (`lib/offers.ts::computeOffer`, mirroring the backend). The AI advertises offers (backend). **POS offers are cashier-manual by design.**
   - **Online-order IMEI** — the orders CSV / pick-&-pack sheet gained an IMEI column; `createInvoiceFromOrder` now requires + records IMEI(s) for Mobile/Tablet (flips `product_units` sold + sets `order_id`), printed on the invoice. Reuses the P3 POS IMEI rules.
 - **P5**: mobile nav polish (mostly done in P1 — bottom nav + More sheet, dark mode, skeletons, 44px targets), empty/error/loading states (largely in place — `loading.tsx`/`error.tsx`/`not-found.tsx` + `EmptyState` used throughout), AED + Dubai-TZ sweep, dark-mode contrast re-audit.
+- ✅ **VAT-on-top + POS discounts + credit notes + live drill-down** (2026-07-29, backend migrations 029+030). Corrected a real defect: retail prices were treated as VAT-inclusive (`total × 5/105`), so a shop typing an ex-VAT price into inventory was paying the 5% out of its own margin on every sale — the P3 note above ("VAT 161.86 on a 3,399 sale, 5/105 exact") documents that bug, not the fix. Now: stored prices are net everywhere (floors, `min_price`, `discount_amount`, revenue), and VAT is added on top at exactly two boundaries — what a customer is quoted/pays, and what a rider collects (COD) — mirrored byte-for-byte between `src/app/utils/vat.py` and `lib/money.ts::vatOnNet`/`withVat`; proved live by an independent Python/TypeScript COD-vs-invoice-total check across 5 price shapes. POS gained a discount entry (split across sale rows in whole fils, `lib/money.ts::allocateDiscount`), printed on the slip/invoice with Gross/Discount/Subtotal always present. Tax credit notes (029) so a void's output VAT no longer stands. Invoice list + printed document gained a Counter sale/Online sale badge. Every Reports card now opens `/reports/sales`, the real rows behind the headline, restating the card that sent you (not owner-gated). **The 5 pre-existing live invoices were retroactively restated** from their own source rows (a one-off script, not shipped) — `products.selling_price`/`orders`/`counter_sales` needed no correction, only the invoices that had carved VAT out instead of adding it on. 19 new TS unit tests, backend 608 green, live integration script extended (`scripts/pos_integration_check.py`).
 
 (Sequenced after Owner Console P1–P2 so logins can be provisioned — in practice P0's `scripts/seed_dashboard_users.py` was enough to unblock P1/P2 testing without the Owner Console.)
 
@@ -319,7 +349,7 @@ sshops → Shops cards · sprof → Reports profit (per shop periods) · sord �
 ## 11. Verification
 1. **Tenant isolation probe**: log in as keeper-A, request shop-B's order/product/conversation by URL → identical 404s (mirror `_own_shop` semantics). Run before every deploy.
 2. **Parity checklists** (§10): perform each action in the dashboard; confirm the same DB effects the bot produces (status row + history row + audit row + Telegram message on test account).
-3. **Money tests** (vitest): `period.ts` Dubai day boundaries (weekly/monthly edges); profit query vs Python `profit_summary` output on same staging data; VAT `total × 5/105` rounding.
+3. **Money tests** (`node --test`, not vitest — Node 24 strips TS types natively, no test dep): `lib/period.ts` Dubai day boundaries (weekly/monthly edges); `lib/profit-math.test.ts` vs Python `profit_summary`/`merge_counter` on the same rows; `lib/money.test.ts` — VAT-on-top (`vatOnNet`), and `allocateDiscount` always sums back to the fil.
 4. **E2E happy path** on staging shop: dashboard draft → confirm (stock actually decremented) → assign rider (rider bot receives push) → rider delivers via bot → COD ledger row appears in dashboard → reconcile from dashboard → Excel export opens.
 5. **Bridge degradation**: stop tunnel → reply/handover/export buttons show "backend offline"; all other tabs work.
 6. **Audit completeness**: after E2E, `audit_logs` has one row per dashboard mutation with `actor=dashboard:*`.
