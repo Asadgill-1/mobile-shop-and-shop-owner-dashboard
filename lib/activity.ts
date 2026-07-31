@@ -33,6 +33,9 @@ const T: Record<string, string> = {
   dreply: "replied to customer {0} from the dashboard",
   dhandover: "returned customer {0} to the AI",
   dedit: "edited product #{0}: {1}",
+  // One key for every data export. Who pulled a copy of the books, and of what, is the point —
+  // which screen they clicked it from is not.
+  dexport: "exported {0}",
   dash_cancel: "cancelled order #{0}",
   dash_create_draft: "created draft order #{0}",
   dash_rider_add: "added a rider",

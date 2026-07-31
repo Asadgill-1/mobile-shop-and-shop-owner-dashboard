@@ -1,10 +1,10 @@
-import { Bike, CircleCheck, CircleSlash, Download, HandCoins } from "lucide-react";
+import { Bike, CircleCheck, CircleSlash, HandCoins } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { fmtDubai } from "@/lib/period";
 import { aed, num } from "@/lib/money";
 import { riderCode, type CodLedgerRow, type RiderRow } from "@/lib/types";
-import { Badge, Card, EmptyState, PageHeader, SectionTitle, StatCard } from "@/components/ui";
+import { Badge, Card, CsvLink, EmptyState, PageHeader, SectionTitle, StatCard } from "@/components/ui";
 import { AddRiderForm, ReconcileForm } from "@/components/rider-forms";
 
 export default async function RidersPage() {
@@ -39,14 +39,10 @@ export default async function RidersPage() {
   return (
     <>
       <PageHeader title="Riders & COD" sub={`${riders.length} rider${riders.length === 1 ? "" : "s"}`}>
-        <a
+        <CsvLink
           href="/riders/export?period=monthly"
-          aria-label="Export rider deliveries CSV (this month)"
-          className="pressable inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface text-sm font-semibold px-3.5 py-2.5 min-h-11"
-        >
-          <Download className="size-4" strokeWidth={2} aria-hidden />
-          CSV
-        </a>
+          label="Export rider deliveries CSV (this month)"
+        />
         <AddRiderForm shops={scope.shops} />
       </PageHeader>
 

@@ -6,7 +6,7 @@ import { parsePeriod } from "@/lib/period";
 import { fmtDubai } from "@/lib/period";
 import { aed2, withVat } from "@/lib/money";
 import { invoiceRef, orderRef, type InvoiceRow } from "@/lib/types";
-import { Badge, Card, EmptyState, PageHeader, SectionTitle, StatCard } from "@/components/ui";
+import { Badge, Card, CsvLink, EmptyState, PageHeader, SectionTitle, StatCard } from "@/components/ui";
 import { CreateInvoiceButton } from "@/components/create-invoice-button";
 
 export const dynamic = "force-dynamic";
@@ -18,16 +18,21 @@ const PERIODS = [
   { key: "monthly", label: "This month" },
 ] as const;
 
+/** Delivered orders waiting for an invoice, per page. The queue is work, not a preview — it has to
+ *  be possible to reach the end of it. */
+const QUEUE_PAGE = 20;
+
 export default async function InvoicesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; date?: string }>;
+  searchParams: Promise<{ period?: string; date?: string; queue?: string }>;
 }) {
-  const [{ period: periodParam, date }, scope] = await Promise.all([searchParams, getScope()]);
+  const [{ period: periodParam, date, queue }, scope] = await Promise.all([searchParams, getScope()]);
   const ids = scopedShopIds(scope);
   const period = parsePeriod(date || periodParam || "monthly");
+  const from = Math.max(0, Number.parseInt(queue ?? "0", 10) || 0);
 
-  const [{ data: invRows }, { data: uninvoiced }] = await Promise.all([
+  const [{ data: invRows }, { data: uninvoiced, count: queueCount }] = await Promise.all([
     db
       .from("invoices")
       .select("id,shop_id,invoice_number,day_seq,source,customer_name,total,vat_amount,issued_at,credit_of")
@@ -35,15 +40,17 @@ export default async function InvoicesPage({
       .gte("issued_at", period.start.toISOString())
       .lt("issued_at", period.end.toISOString())
       .order("issued_at", { ascending: false }),
-    // Delivered orders that never got an invoice yet — one tap creates it.
+    // Delivered orders that never got an invoice yet — one tap creates it. Counted exactly and
+    // paged: capped at 10 with no total, an eleventh order simply vanished from the queue, and a
+    // supply with no tax invoice is the one that gets found at audit.
     db
       .from("orders")
-      .select("id,order_number,day_seq,created_at,quantity,customer_name,selling_price,discount_amount,delivered_at, products(category), invoices(id)")
+      .select("id,order_number,day_seq,created_at,quantity,customer_name,selling_price,discount_amount,delivered_at, products(category), invoices(id)", { count: "exact" })
       .in("shop_id", ids)
       .eq("status", "delivered")
       .is("invoices", null)
       .order("delivered_at", { ascending: false })
-      .limit(10),
+      .range(from, from + QUEUE_PAGE - 1),
   ]);
 
   const invoices = (invRows ?? []) as Pick<
@@ -58,7 +65,12 @@ export default async function InvoicesPage({
 
   return (
     <>
-      <PageHeader title="Invoices" sub={`${period.label}${scope.activeShopId ? "" : " · all shops"}`} />
+      <PageHeader title="Invoices" sub={`${period.label}${scope.activeShopId ? "" : " · all shops"}`}>
+        <CsvLink
+          href={`/invoices/export?period=${encodeURIComponent(period.key)}`}
+          label={`Export the invoice register for ${period.label} as CSV`}
+        />
+      </PageHeader>
 
       <div className="flex flex-wrap items-center gap-2">
         {PERIODS.map((p) => (
@@ -143,7 +155,10 @@ export default async function InvoicesPage({
 
       {(uninvoiced ?? []).length > 0 && (
         <>
-          <SectionTitle>Delivered orders without an invoice</SectionTitle>
+          <SectionTitle>
+            Delivered orders without an invoice
+            {queueCount ? ` (${queueCount})` : ""}
+          </SectionTitle>
           <Card>
             <ul className="divide-y divide-border">
               {(uninvoiced ?? []).map((o) => (
@@ -169,6 +184,33 @@ export default async function InvoicesPage({
               ))}
             </ul>
           </Card>
+          {(from > 0 || (queueCount ?? 0) > from + QUEUE_PAGE) && (
+            <div className="flex items-center justify-between gap-3">
+              {from > 0 ? (
+                <Link
+                  href={`/invoices?period=${period.key}&queue=${Math.max(0, from - QUEUE_PAGE)}`}
+                  className="pressable inline-flex items-center rounded-xl border border-border bg-surface px-4 min-h-11 text-sm font-semibold"
+                >
+                  Newer
+                </Link>
+              ) : (
+                <span />
+              )}
+              <span className="text-xs text-subtle tabular">
+                {from + 1}–{Math.min(from + QUEUE_PAGE, queueCount ?? 0)} of {queueCount ?? 0}
+              </span>
+              {(queueCount ?? 0) > from + QUEUE_PAGE ? (
+                <Link
+                  href={`/invoices?period=${period.key}&queue=${from + QUEUE_PAGE}`}
+                  className="pressable inline-flex items-center rounded-xl border border-border bg-surface px-4 min-h-11 text-sm font-semibold"
+                >
+                  Older
+                </Link>
+              ) : (
+                <span />
+              )}
+            </div>
+          )}
         </>
       )}
     </>

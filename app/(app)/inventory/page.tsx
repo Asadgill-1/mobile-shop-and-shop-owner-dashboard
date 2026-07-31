@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { aed } from "@/lib/money";
 import { isLowStock, needsFloor, productCode, type ProductRow } from "@/lib/types";
-import { Badge, Card, EmptyState, PageHeader } from "@/components/ui";
+import { Badge, Card, CsvLink, EmptyState, PageHeader } from "@/components/ui";
 
 const CATEGORIES = ["Mobile", "Laptop", "Tablet", "Accessory"] as const;
 
@@ -71,6 +71,7 @@ export default async function InventoryPage({ searchParams }: { searchParams: Pr
         title="Inventory"
         sub={`${products.length} product${products.length === 1 ? "" : "s"} · ${units} unit${units === 1 ? "" : "s"} in stock`}
       >
+        <CsvLink href="/inventory/export" label="Export the stock list with valuations as CSV" />
         <Link
           href="/inventory/new"
           className="pressable inline-flex items-center gap-1.5 rounded-xl bg-accent text-accent-fg text-sm font-semibold px-4 py-2.5 min-h-11"

@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { Download, HandCoins, Inbox, Plus, ReceiptText, Search } from "lucide-react";
+import { HandCoins, Inbox, Plus, ReceiptText, Search } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { fmtDubai } from "@/lib/period";
 import { aed, orderNet } from "@/lib/money";
 import { orderRef, type OrderRow, type PriceRequestRow } from "@/lib/types";
-import { Badge, Card, EmptyState, PageHeader, StatusPill } from "@/components/ui";
+import { Badge, Card, CsvLink, EmptyState, PageHeader, StatusPill } from "@/components/ui";
 import { ConfirmRejectButtons } from "@/components/order-actions";
 import { PriceActions } from "@/components/price-actions";
 
@@ -39,14 +39,10 @@ export default async function OrdersPage({ searchParams }: { searchParams: Promi
   return (
     <>
       <PageHeader title="Orders" sub={multiShop ? "All shops" : shopName.get(ids[0])}>
-        <a
+        <CsvLink
           href={`/orders/export?period=monthly${status ? `&status=${status}` : ""}`}
-          aria-label="Export orders CSV (this month)"
-          className="pressable inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface text-sm font-semibold px-3.5 py-2.5 min-h-11"
-        >
-          <Download className="size-4" strokeWidth={2} aria-hidden />
-          CSV
-        </a>
+          label="Export orders CSV (this month)"
+        />
         <Link
           href="/orders/new"
           className="pressable inline-flex items-center gap-1.5 rounded-xl bg-accent text-accent-fg text-sm font-semibold px-4 py-2.5 min-h-11"

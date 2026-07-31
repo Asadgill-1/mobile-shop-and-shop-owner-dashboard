@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Ban, Download, ScrollText, Tags } from "lucide-react";
+import { Ban, ScrollText, Tags } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { dubaiDateISO, fmtDubai, parsePeriod } from "@/lib/period";
@@ -8,7 +8,7 @@ import { aed } from "@/lib/money";
 import { actorName, categoryOf, changeLines, humanize } from "@/lib/activity";
 import type { ActivityCategory } from "@/lib/activity";
 import type { AuditRow } from "@/lib/types";
-import { Badge, Card, EmptyState, PageHeader, SectionTitle } from "@/components/ui";
+import { Badge, Card, CsvLink, EmptyState, PageHeader, SectionTitle } from "@/components/ui";
 
 const PERIODS = [
   { key: "today", label: "Today" },
@@ -117,13 +117,10 @@ export default async function LogsPage({
         title="Shop logs"
         sub={`${period.label}${scope.activeShopId ? "" : " · all shops"}`}
       >
-        <a
+        <CsvLink
           href={`/logs/export?${new URLSearchParams({ view, period: period.key }).toString()}`}
-          className="pressable inline-flex items-center gap-2 rounded-xl border border-border bg-surface px-4 min-h-11 text-sm font-semibold"
-        >
-          <Download className="size-4" strokeWidth={2} aria-hidden />
-          CSV
-        </a>
+          label={`Export ${view} logs for ${period.label} as CSV`}
+        />
       </PageHeader>
 
       <div className="flex flex-wrap items-center gap-2">

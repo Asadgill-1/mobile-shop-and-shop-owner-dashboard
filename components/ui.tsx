@@ -1,4 +1,5 @@
 // Presentational primitives — server-component friendly (no hooks, no state).
+import { Download } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { OrderStatus } from "@/lib/types";
 
@@ -139,5 +140,20 @@ export function SectionTitle({ children }: { children: React.ReactNode }) {
     <h2 className="font-display text-sm font-semibold uppercase tracking-wide text-subtle">
       {children}
     </h2>
+  );
+}
+
+/** The CSV button in a PageHeader. Plain <a>, not <Link> — a download must not be intercepted by
+ *  the client router, or the browser navigates instead of saving the file. */
+export function CsvLink({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      aria-label={label}
+      className="pressable inline-flex items-center gap-1.5 rounded-xl border border-border bg-surface text-sm font-semibold px-3.5 py-2.5 min-h-11"
+    >
+      <Download className="size-4" strokeWidth={2} aria-hidden />
+      CSV
+    </a>
   );
 }

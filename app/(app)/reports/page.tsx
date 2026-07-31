@@ -19,7 +19,7 @@ import { getScope, scopedShopIds } from "@/lib/scope";
 import { parsePeriod } from "@/lib/period";
 import { aed } from "@/lib/money";
 import { profitSummary } from "@/lib/profit";
-import { Badge, Card, EmptyState, PageHeader, SectionTitle, StatCard } from "@/components/ui";
+import { Badge, Card, CsvLink, EmptyState, PageHeader, SectionTitle, StatCard } from "@/components/ui";
 
 const PERIODS = [
   { key: "today", label: "Today" },
@@ -51,7 +51,12 @@ export default async function ReportsPage({
       <PageHeader
         title="Reports"
         sub={`${period.label}${scope.activeShopId ? "" : " · all shops"}`}
-      />
+      >
+        <CsvLink
+          href={`/reports/export?period=${encodeURIComponent(period.key)}`}
+          label={`Export the ${period.label} report as CSV`}
+        />
+      </PageHeader>
 
       <div className="flex flex-wrap items-center gap-2">
         {PERIODS.map((p) => (
