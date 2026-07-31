@@ -1,10 +1,9 @@
 "use client";
 
-import { useActionState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { createProduct, updateProduct } from "@/actions/products";
-import type { ActionResult } from "@/actions/orders";
 import { Feedback } from "./action-feedback";
+import { PinPrompt, usePinRetry } from "./pin-prompt";
 import type { ShopRef } from "@/lib/scope";
 
 const CATEGORIES = ["Mobile", "Laptop", "Tablet", "Accessory"];
@@ -58,16 +57,17 @@ export function ProductForm({
   shopId?: string;
   defaults?: ProductDefaults;
 }) {
-  const [result, action, pending] = useActionState<ActionResult | null, FormData>(
-    mode === "create" ? createProduct : updateProduct,
-    null,
+  // usePinRetry rather than useActionState: a cost edit comes back needing a PIN, and React has
+  // reset the form by then — the retry must re-send what was typed, not what the fields still show.
+  const { result, pending, submit, retry } = usePinRetry((fd) =>
+    (mode === "create" ? createProduct : updateProduct)(null, fd),
   );
   const specsText = Object.entries(defaults.specs ?? {})
     .map(([k, v]) => `${k}: ${v}`)
     .join("\n");
 
   return (
-    <form action={action} className="flex flex-col gap-4">
+    <form action={submit} className="flex flex-col gap-4">
       {mode === "create" ? (
         shops && shops.length > 1 ? (
           <Field label="Shop">
@@ -164,6 +164,9 @@ export function ProductForm({
       </Field>
 
       <Feedback result={result} />
+      {/* A cost edit, or a price cut past the limit, comes back needsPin. Approve re-sends the
+          values that were submitted, so nothing typed is lost even though the form has reset. */}
+      <PinPrompt result={result} pending={pending} onSubmit={retry} />
       <button
         type="submit"
         disabled={pending}

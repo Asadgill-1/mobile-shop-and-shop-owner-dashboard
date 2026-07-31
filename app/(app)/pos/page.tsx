@@ -111,7 +111,8 @@ export default async function PosPage() {
             {today.map((r) => {
               const isVoid = r.quantity < 0;
               return (
-                <li key={r.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                // wraps so a void's PIN prompt gets a line of its own rather than a 100px box
+                <li key={r.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0">
                     <p className={`text-sm font-semibold truncate ${isVoid ? "line-through text-subtle" : ""}`}>
                       {r.products ? `${r.products.brand} ${r.products.model}` : "—"} × {Math.abs(r.quantity)}

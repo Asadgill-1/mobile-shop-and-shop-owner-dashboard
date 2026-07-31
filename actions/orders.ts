@@ -20,8 +20,13 @@ import { msgAed, num, withVat } from "@/lib/money";
 import { orderRef } from "@/lib/types";
 import { computeOffer, type OfferRow } from "@/lib/offers";
 import { issueCreditNote, invoiceForOrder } from "@/lib/credit-note";
+import { aedText, requireOverride } from "@/lib/override";
 
-export type ActionResult = { ok: true; message?: string } | { ok: false; error: string };
+// needsPin: refused only for want of a manager PIN (lib/override.ts). The UI shows the prompt and
+// repeats the identical call with the PIN — there is no token and no state between the two.
+export type ActionResult =
+  | { ok: true; message?: string }
+  | { ok: false; error: string; needsPin?: true };
 
 const DELIVERY_MSG: Record<string, (num: number, shop: string) => string> = {
   packed: (n) => `📦 Order #${n} is packed and ready to go.`,
@@ -332,6 +337,22 @@ export async function cancelOrder(orderId: string, formData: FormData): Promise<
   if (order.status === "cancelled" || order.status === "delivered") {
     return { ok: false, error: `Order is already ${order.status}.` };
   }
+
+  // orders.selling_price is the LINE total already (profit-math.ts:147 adds it once, not per unit),
+  // so what the customer owed is that minus what was bargained off.
+  const value = num(order.selling_price) - num(order.discount_amount);
+  const gate = await requireOverride(order.shop_id, email, String(formData.get("pin") ?? ""), (L) =>
+    value > L.cancel_aed
+      ? [{
+          kind: "cancel" as const,
+          amount: value,
+          threshold: L.cancel_aed,
+          detail: `Order #${order.order_number} · ${order.products?.brand ?? "?"} ${order.products?.model ?? "?"} · ${aedText(value)}`,
+          ref: { table: "orders", id: order.id },
+        }]
+      : [],
+  );
+  if (gate) return gate;
 
   await setStatus(order.id, "cancelled", email);
   await db.from("orders").update({ cancel_remarks: remarks }).eq("id", order.id);

@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { audit } from "@/lib/audit";
 import { moveStock } from "@/lib/stock";
+import { aedText, requireOverride } from "@/lib/override";
 import { notifyLowStock, shopForNotify } from "@/lib/notify";
 import {
   VALID_CATEGORIES,
@@ -24,14 +25,32 @@ async function actor(): Promise<{ email: string; shopIds: string[] }> {
   return { email: `dashboard:${scope.email}`, shopIds: scope.shopIds };
 }
 
-async function ownProduct(shopIds: string[], productId: string): Promise<{ id: string; shop_id: string; tags: string[]; is_featured: boolean; product_number: number | null } | null> {
+interface OwnedProduct {
+  id: string;
+  shop_id: string;
+  tags: string[];
+  is_featured: boolean;
+  product_number: number | null;
+  // Name and cost so a gated action (035) can price what it is about to do and say which product
+  // it was, without a second fetch on the way past.
+  brand: string;
+  model: string;
+  cost_price: string;
+}
+
+async function ownProduct(shopIds: string[], productId: string): Promise<OwnedProduct | null> {
   const { data } = await db
     .from("products")
-    .select("id,shop_id,tags,is_featured,product_number")
+    .select("id,shop_id,tags,is_featured,product_number,brand,model,cost_price")
     .eq("id", productId)
     .in("shop_id", shopIds)
     .maybeSingle();
   return data;
+}
+
+/** "#4 Apple iPhone 16" — how a product reads in the approvals log. */
+function label(p: OwnedProduct): string {
+  return `#${p.product_number ?? "?"} ${p.brand} ${p.model}`;
 }
 
 function productFields(formData: FormData): Record<string, unknown> {
@@ -206,6 +225,42 @@ export async function updateProduct(
       .eq("id", product.id)
       .single();
 
+    // Cost is the denominator of every margin, profit and valuation figure the owner reads, and
+    // nothing downstream can tell an honest correction from a quiet one — so it is always gated.
+    // Selling price is gated in the cutting direction only; raising a price is never the fraud.
+    const oldCost = Number(before?.cost_price ?? 0);
+    const oldSell = Number(before?.selling_price ?? 0);
+    const [newCost, newSell] = [Number(fields.cost_price), Number(fields.selling_price)];
+    const gate = await requireOverride(
+      product.shop_id,
+      email,
+      String(formData.get("pin") ?? ""),
+      (L) => {
+        const needs = [];
+        if (before && newCost !== oldCost) {
+          needs.push({
+            kind: "cost_edit" as const,
+            amount: newCost,
+            threshold: oldCost,
+            detail: `${label(product)} cost ${aedText(oldCost)} → ${aedText(newCost)}`,
+            ref: { table: "products", id: product.id },
+          });
+        }
+        const cut = oldSell > 0 ? ((oldSell - newSell) / oldSell) * 100 : 0;
+        if (before && cut > L.price_cut_pct) {
+          needs.push({
+            kind: "price_cut" as const,
+            amount: Math.round(cut * 10) / 10,
+            threshold: L.price_cut_pct,
+            detail: `${label(product)} price ${aedText(oldSell)} → ${aedText(newSell)} (−${Math.round(cut * 10) / 10}%)`,
+            ref: { table: "products", id: product.id },
+          });
+        }
+        return needs;
+      },
+    );
+    if (gate) return gate;
+
     await db.from("products").update(fields).eq("id", product.id).eq("shop_id", product.shop_id);
 
     const changes: Record<string, [string, string]> = {};
@@ -282,11 +337,32 @@ export async function toggleFeatured(productId: string): Promise<ActionResult> {
 }
 
 /** Quick stock ± via the atomic decrement RPC (negative n restocks; can't go below 0). */
-export async function adjustStock(productId: string, delta: number): Promise<ActionResult> {
+export async function adjustStock(
+  productId: string,
+  delta: number,
+  pin?: string,
+): Promise<ActionResult> {
   const { email, shopIds } = await actor();
   if (!Number.isInteger(delta) || delta === 0) return { ok: false, error: "Invalid amount." };
   const product = await ownProduct(shopIds, productId);
   if (!product) return { ok: false, error: "Product not found." };
+
+  // Both directions: writing stock ON is how a shrinkage is papered over, writing it off is how it
+  // leaves. The ledger already records who and how much (034) — this is the ceiling on top.
+  const units = Math.abs(delta);
+  const value = Math.round(units * Number(product.cost_price) * 100) / 100;
+  const gate = await requireOverride(product.shop_id, email, pin, (L) =>
+    units > L.stock_units || value > L.stock_aed
+      ? [{
+          kind: "stock_adjust" as const,
+          amount: units,
+          threshold: L.stock_units,
+          detail: `${label(product)} ${delta > 0 ? "+" : ""}${delta} units · ${aedText(value)} at cost`,
+          ref: { table: "products", id: product.id },
+        }]
+      : [],
+  );
+  if (gate) return gate;
 
   if (!(await moveStock(product.shop_id, product.id, delta, "adjust", email))) {
     return { ok: false, error: "Stock can't go below 0." };
@@ -304,7 +380,7 @@ export async function adjustStock(productId: string, delta: number): Promise<Act
 }
 
 /** Delete, blocked while any order references it (PLAN §5.3 NEW rule). */
-export async function deleteProduct(productId: string): Promise<ActionResult> {
+export async function deleteProduct(productId: string, pin?: string): Promise<ActionResult> {
   const { email, shopIds } = await actor();
   const product = await ownProduct(shopIds, productId);
   if (!product) return { ok: false, error: "Product not found." };
@@ -334,6 +410,17 @@ export async function deleteProduct(productId: string): Promise<ActionResult> {
         + "the movement record has to survive for the books.",
     };
   }
+
+  // Asked LAST, after the two blockers above: there is no point spending a manager's PIN on a
+  // delete the FK is going to refuse anyway.
+  const gate = await requireOverride(product.shop_id, email, pin, () => [
+    {
+      kind: "product_delete" as const,
+      detail: `${label(product)} deleted (never stocked)`,
+      ref: { table: "products", id: product.id },
+    },
+  ]);
+  if (gate) return gate;
 
   // Storage cleanup: everything under {shop_id}/{product_id}/ in shop-media.
   const prefix = `${product.shop_id}/${product.id}`;

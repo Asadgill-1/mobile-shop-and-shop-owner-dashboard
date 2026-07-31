@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Minus, Plus, Star, Trash2 } from "lucide-react";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/actions/products";
 import type { ActionResult } from "@/actions/orders";
 import { Feedback } from "./action-feedback";
+import { PinPrompt } from "./pin-prompt";
 
 const ALL_TAGS = [
   "clearance", "trending", "best_camera", "long_battery", "gaming", "budget",
@@ -37,11 +38,14 @@ export function ProductTools({
   const [level, setLevel] = useState(boost);
   const [pending, startTransition] = useTransition();
 
-  const run = (fn: () => Promise<ActionResult>) =>
-    startTransition(async () => {
-      const r = await fn();
-      setResult(r);
-    });
+  // Every action goes through run(), which keeps the last one so a needsPin refusal can repeat the
+  // identical call with the PIN. A ref, not state: replaying it must not itself trigger a render.
+  const last = useRef<((pin?: string) => Promise<ActionResult>) | null>(null);
+  const run = (fn: (pin?: string) => Promise<ActionResult>, pin?: string) => {
+    last.current = fn;
+    startTransition(async () => setResult(await fn(pin)));
+  };
+  const retry = (pin: string) => last.current && run(last.current, pin);
 
   return (
     <div className="flex flex-col gap-5">
@@ -54,7 +58,7 @@ export function ProductTools({
           <button
             type="button"
             aria-label="Remove one from stock"
-            onClick={() => run(() => adjustStock(productId, -1))}
+            onClick={() => run((pin) => adjustStock(productId, -1, pin))}
             disabled={pending || quantity === 0}
             className="pressable cursor-pointer flex-1 rounded-xl border border-border min-h-11 flex items-center justify-center disabled:opacity-40"
           >
@@ -63,7 +67,7 @@ export function ProductTools({
           <button
             type="button"
             aria-label="Add one to stock"
-            onClick={() => run(() => adjustStock(productId, 1))}
+            onClick={() => run((pin) => adjustStock(productId, 1, pin))}
             disabled={pending}
             className="pressable cursor-pointer flex-1 rounded-xl bg-accent text-accent-fg min-h-11 flex items-center justify-center disabled:opacity-60"
           >
@@ -131,16 +135,17 @@ export function ProductTools({
       </button>
 
       <Feedback result={result} />
+      <PinPrompt result={result} pending={pending} onSubmit={retry} />
 
       <div className="border-t border-border pt-4">
         <button
           type="button"
           onClick={() => {
             if (!window.confirm("Delete this product and its photos? This can't be undone.")) return;
-            startTransition(async () => {
-              const r = await deleteProduct(productId);
+            run(async (pin) => {
+              const r = await deleteProduct(productId, pin);
               if (r.ok) router.push("/inventory");
-              else setResult(r);
+              return r;
             });
           }}
           disabled={pending}

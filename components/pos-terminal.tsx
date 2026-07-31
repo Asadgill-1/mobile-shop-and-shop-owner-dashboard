@@ -22,6 +22,7 @@ import {
 import { checkoutSale, type CheckoutResult } from "@/actions/pos";
 import { aed, aed2, vatOnNet } from "@/lib/money";
 import { PAYMENT_REF_MAX } from "@/lib/types";
+import { PinPrompt } from "./pin-prompt";
 
 export interface PosProduct {
   id: string;
@@ -289,7 +290,9 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
   const total = Math.round((subtotal + vat) * 100) / 100;
   const needsCustomer = total > FULL_INVOICE_THRESHOLD;
 
-  const checkout = async () => {
+  // `pin` is only ever set on the retry after the server came back needsPin — the cart is sent
+  // identically both times, so the same figures the manager was shown are the ones that go through.
+  const checkout = async (pin?: string) => {
     setPending(true);
     setResult(null);
     const res = await checkoutSale({
@@ -301,6 +304,7 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
       customer_address: customer.address,
       customer_trn: customer.trn,
       discount: disc,
+      pin,
       lines: cart.map((l) => ({
         product_id: l.product.id,
         quantity: l.quantity,
@@ -591,13 +595,14 @@ export function PosTerminal({ shopId, products }: { shopId: string; products: Po
               </button>
             )}
 
-            {result && !result.ok && (
+            {result && !result.ok && !result.needsPin && (
               <p className="text-sm font-medium text-destructive-text">{result.error}</p>
             )}
+            <PinPrompt result={result} pending={pending} onSubmit={(pin) => checkout(pin)} />
             <button
               type="button"
               disabled={pending || cart.length === 0}
-              onClick={checkout}
+              onClick={() => checkout()}
               className="pressable cursor-pointer inline-flex items-center justify-center gap-2 rounded-xl bg-accent text-accent-fg font-display font-semibold px-4 py-3 min-h-12 disabled:opacity-60"
             >
               {pending ? (

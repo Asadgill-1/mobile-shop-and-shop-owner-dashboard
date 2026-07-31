@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Ban, ScrollText, Tags } from "lucide-react";
+import { Ban, KeyRound, ScrollText, Tags } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { dubaiDateISO, fmtDubai, parsePeriod } from "@/lib/period";
@@ -19,6 +19,7 @@ const PERIODS = [
 
 const VIEWS = [
   { key: "activity", label: "Activity" },
+  { key: "approvals", label: "Approvals" },
   { key: "cancels", label: "Cancellations" },
   { key: "discounts", label: "Discounts" },
 ] as const;
@@ -30,6 +31,38 @@ const CATS = [
   { key: "pos", label: "POS" },
   { key: "chats", label: "Chats" },
 ] as const;
+
+interface ApprovalRow {
+  id: number;
+  shop_id: string;
+  kind: string;
+  outcome: "approved" | "refused" | "locked" | "unset";
+  amount: string | null;
+  threshold: string | null;
+  detail: string | null;
+  actor: string;
+  created_at: string;
+}
+
+/** What each kind was, in the owner's words rather than the column's. */
+const KIND_LABEL: Record<string, string> = {
+  discount: "Cart discount",
+  unit_price: "Price at the till",
+  void: "Void",
+  cancel: "Order cancelled",
+  stock_adjust: "Stock corrected",
+  product_delete: "Product deleted",
+  cost_edit: "Cost price edited",
+  price_cut: "Selling price cut",
+  trn: "TRN changed",
+};
+
+const OUTCOME: Record<string, { tone: "accent" | "destructive" | "warning" | "neutral"; label: string }> = {
+  approved: { tone: "accent", label: "approved" },
+  refused: { tone: "destructive", label: "wrong PIN" },
+  locked: { tone: "destructive", label: "locked out" },
+  unset: { tone: "warning", label: "no PIN set" },
+};
 
 interface CancelRow {
   id: string;
@@ -175,6 +208,8 @@ export default async function LogsPage({
 
       {view === "activity" ? (
         <Activity ids={ids} period={period} cat={cat} names={names} shopName={shopName} qs={qs} />
+      ) : view === "approvals" ? (
+        <Approvals ids={ids} period={period} names={names} shopName={shopName} />
       ) : view === "cancels" ? (
         <Cancels ids={ids} period={period} names={names} shopName={shopName} />
       ) : (
@@ -272,6 +307,85 @@ async function Activity({
       </Card>
       {all.length === 400 ? (
         <p className="text-xs text-subtle">Showing the latest 400 entries — narrow the period for more.</p>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * Everything that crossed a manager-PIN threshold (migration 035), whatever the outcome — the
+ * separate approvals log, as a view here rather than a route of its own.
+ *
+ * `unset` is the row that matters most on a shop with no PIN yet: nothing was blocked, and this is
+ * the priced list of what went through unsupervised. It leads the summary for that reason.
+ */
+async function Approvals({
+  ids,
+  period,
+  names,
+  shopName,
+}: {
+  ids: string[];
+  period: { start: Date; end: Date };
+  names: Record<string, string>;
+  shopName: Map<string, string>;
+}) {
+  const { data } = await db
+    .from("override_approvals")
+    .select("id,shop_id,kind,outcome,amount,threshold,detail,actor,created_at")
+    .in("shop_id", ids)
+    .gte("created_at", period.start.toISOString())
+    .lt("created_at", period.end.toISOString())
+    .order("created_at", { ascending: false })
+    .limit(400);
+
+  const rows = (data ?? []) as ApprovalRow[];
+  const count = (o: string) => rows.filter((r) => r.outcome === o).length;
+  const unset = count("unset");
+
+  return (
+    <section className="flex flex-col gap-3">
+      {rows.length > 0 ? (
+        <SectionTitle>
+          {unset > 0 ? `${unset} went through with no PIN set · ` : ""}
+          {count("approved")} approved · {count("refused") + count("locked")} refused
+        </SectionTitle>
+      ) : null}
+      <Card>
+        {rows.length === 0 ? (
+          <EmptyState
+            icon={KeyRound}
+            title="Nothing needed approval in this period"
+            hint="Discounts, prices, voids, cancellations and stock corrections appear here once they cross a limit."
+          />
+        ) : (
+          <ul className="divide-y divide-border">
+            {rows.map((r) => {
+              const o = OUTCOME[r.outcome] ?? { tone: "neutral" as const, label: r.outcome };
+              return (
+                <li key={r.id} className="px-4 py-3 flex flex-col gap-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-semibold">{KIND_LABEL[r.kind] ?? r.kind}</span>
+                    <Badge tone={o.tone}>{o.label}</Badge>
+                    {r.amount != null && r.threshold != null ? (
+                      <span className="text-xs text-subtle tabular">
+                        limit {aed(Number(r.threshold))}
+                      </span>
+                    ) : null}
+                  </div>
+                  {r.detail ? <p className="text-sm">{r.detail}</p> : null}
+                  <p className="text-xs text-subtle">
+                    {fmtDubai(r.created_at)} · {actorName(r.actor, names)}
+                    {shopName.size > 1 ? ` · ${shopName.get(r.shop_id) ?? "—"}` : ""}
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Card>
+      {rows.length === 400 ? (
+        <p className="text-xs text-subtle">Showing the latest 400 — narrow the period for more.</p>
       ) : null}
     </section>
   );

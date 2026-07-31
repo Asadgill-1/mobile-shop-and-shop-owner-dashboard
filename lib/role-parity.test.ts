@@ -34,13 +34,21 @@ const read = (f: string) => readFileSync(f, "utf8");
 /** Files that branch on WHO is asking, rather than only on which shops they own. */
 const ROLE_AWARE = [
   "actions/shop.ts", // only an owner may move the active-shop cookie
+  "actions/settings.ts", // only an owner may SET the manager PIN (035) — see below
   `${APP}/layout.tsx`, // nav entries + the shop switcher
   `${APP}/logs/export/route.ts`, // owner-only, and the twin of the page below
   `${APP}/logs/page.tsx`, // owner-only oversight views
   `${APP}/reports/page.tsx`, // the "By shop" comparison table
+  `${APP}/settings/page.tsx`, // renders the manager-PIN card for owners only
 ].sort();
 
-/** The subset that REFUSES a keeper outright. Page and export route must move together. */
+/**
+ * The subset that REFUSES a keeper outright. Page and export route must move together.
+ *
+ * settings is deliberately NOT here: a keeper still loads /settings and still edits everything they
+ * could before. Only the manager-PIN card is withheld, and setManagerPin returns an error rather
+ * than a 404 — a keeper who reaches it should be told why, not shown a missing page.
+ */
 const OWNER_ONLY = [`${APP}/logs/export/route.ts`, `${APP}/logs/page.tsx`].sort();
 
 test("the set of role-aware files is exactly the intended one", () => {

@@ -1,10 +1,9 @@
 "use client";
 
-import { useActionState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { setInvoiceIdentity } from "@/actions/settings";
-import type { ActionResult } from "@/actions/orders";
 import { Feedback } from "./action-feedback";
+import { PinPrompt, usePinRetry } from "./pin-prompt";
 
 const inputCls =
   "rounded-xl border border-border bg-background px-3.5 py-2.5 min-h-11 text-base placeholder:text-subtle";
@@ -20,13 +19,10 @@ export function InvoiceIdentityForm({
   name: string | null;
   address: string | null;
 }) {
-  const [result, action, pending] = useActionState<ActionResult | null, FormData>(
-    setInvoiceIdentity,
-    null,
-  );
+  const { result, pending, submit, retry } = usePinRetry((fd) => setInvoiceIdentity(null, fd));
 
   return (
-    <form action={action} className="flex flex-col gap-2.5">
+    <form action={submit} className="flex flex-col gap-2.5">
       <input type="hidden" name="shop_id" value={shopId} />
       <label className="flex flex-col gap-1">
         <span className="text-xs font-semibold text-subtle">TRN (15 digits)</span>
@@ -47,6 +43,10 @@ export function InvoiceIdentityForm({
         <input name="invoice_address" defaultValue={address ?? ""} placeholder="Street, area, emirate" className={inputCls} />
       </label>
       <Feedback result={result} />
+      {/* Changing the TRN needs a manager PIN — it prints on every tax invoice, and checkout is
+          refused without one. Editing only the name or address never asks. The prompt shows the
+          old → new TRN, because React has already reset the field by the time it appears. */}
+      <PinPrompt result={result} pending={pending} onSubmit={retry} />
       <button
         type="submit"
         disabled={pending}

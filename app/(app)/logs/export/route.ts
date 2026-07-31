@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { getScope, scopedShopIds } from "@/lib/scope";
 import { dubaiDateISO, fmtDubai, parsePeriod } from "@/lib/period";
 import { actorName, changeLines, humanize } from "@/lib/activity";
-import { csvResponse, toCsv } from "@/lib/csv";
+import { csvMoney, csvResponse, toCsv } from "@/lib/csv";
 import { audit } from "@/lib/audit";
 import type { AuditRow } from "@/lib/types";
 
@@ -21,7 +21,28 @@ export async function GET(req: Request): Promise<Response> {
   const end = period.end.toISOString();
 
   let csv: string;
-  if (view === "cancels") {
+  if (view === "approvals") {
+    // Same query as the page's Approvals view, same order — a report and its export must not drift.
+    const { data } = await db
+      .from("override_approvals")
+      .select("shop_id,kind,outcome,amount,threshold,detail,actor,created_at")
+      .in("shop_id", ids)
+      .gte("created_at", start).lt("created_at", end)
+      .order("created_at", { ascending: false });
+    interface Row {
+      shop_id: string; kind: string; outcome: string; amount: string | null;
+      threshold: string | null; detail: string | null; actor: string; created_at: string;
+    }
+    csv = toCsv(
+      ["Time (Dubai)", "Shop", "Kind", "Outcome", "Amount", "Limit", "Detail", "By"],
+      ((data ?? []) as Row[]).map((r) => [
+        fmtDubai(r.created_at), shopName.get(r.shop_id) ?? "", r.kind, r.outcome,
+        r.amount == null ? "" : csvMoney(r.amount),
+        r.threshold == null ? "" : csvMoney(r.threshold),
+        r.detail ?? "", r.actor,
+      ]),
+    );
+  } else if (view === "cancels") {
     const { data } = await db
       .from("orders")
       .select("shop_id,order_number,quantity,selling_price,cancel_remarks,created_at, products(brand,model), order_status_history(status,changed_by,changed_at)")

@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { assertShop, getScope } from "@/lib/scope";
 import { audit } from "@/lib/audit";
+import { newPinRow, requireOverride } from "@/lib/override";
 import type { ActionResult } from "./orders";
 
 /** Invoice identity printed on every tax invoice (migration 022): TRN, legal name, address. */
@@ -21,6 +22,28 @@ export async function setInvoiceIdentity(
   if (trn && !/^\d{15}$/.test(trn)) {
     return { ok: false, error: "A UAE TRN is 15 digits." };
   }
+
+  // Phase 1d's sharpest finding, confirmed live: a keeper can edit this. The TRN prints on every
+  // tax invoice, and migration 033's guard refuses checkout without one — so the wrong 15 digits
+  // either halt the till or put someone else's tax number on real documents. Gated only when it
+  // actually CHANGES, so fixing a typo in the address stays one tap.
+  const { data: current } = await db.from("shops").select("trn").eq("id", shopId).maybeSingle();
+  const wasTrn = current?.trn ?? "";
+  const gate = await requireOverride(
+    shopId,
+    `dashboard:${scope.email}`,
+    String(formData.get("pin") ?? ""),
+    () =>
+      trn === wasTrn
+        ? []
+        : [{
+            kind: "trn" as const,
+            detail: `TRN ${wasTrn || "(none)"} → ${trn || "(none)"}`,
+            ref: { table: "shops", id: shopId },
+          }],
+  );
+  if (gate) return gate;
+
   const { error } = await db
     .from("shops")
     .update({
@@ -33,6 +56,52 @@ export async function setInvoiceIdentity(
   await audit(`dashboard:${scope.email}`, "dash_invoice_identity", shopId, { args: [] });
   revalidatePath("/settings");
   return { ok: true, message: "Invoice details saved." };
+}
+
+/**
+ * Set (or replace) the shop's manager PIN — migration 035.
+ *
+ * OWNER ONLY, and the only role gate in this file. A PIN a keeper can change is not a ceiling on
+ * the keeper; the point of the whole phase is that the person being gated cannot move the gate.
+ * There is no "remove" and no old-PIN challenge: an owner who forgets simply sets a new one, which
+ * is the recovery path, and asking the authority to prove it knows the secret it owns buys nothing.
+ * Setting a PIN also clears any lockout — the natural fix for a locked-out till.
+ */
+export async function setManagerPin(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const scope = await getScope();
+  const shopId = String(formData.get("shop_id") ?? "");
+  assertShop(scope, shopId);
+  if (scope.role !== "owner") {
+    return { ok: false, error: "Only the shop owner can set the manager PIN." };
+  }
+
+  const pin = String(formData.get("new_pin") ?? "").trim();
+  if (pin !== String(formData.get("confirm_pin") ?? "").trim()) {
+    return { ok: false, error: "The two PINs don't match." };
+  }
+  const hashed = await newPinRow(pin);
+  if (!hashed.ok) return hashed;
+
+  const { error } = await db.from("manager_pins").upsert(
+    {
+      shop_id: shopId,
+      pin_hash: hashed.pin_hash,
+      pin_salt: hashed.pin_salt,
+      fail_count: 0,
+      locked_until: null,
+      set_by: `dashboard:${scope.email}`,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "shop_id" },
+  );
+  if (error) return { ok: false, error: "Could not save the PIN." };
+  // The PIN itself never reaches the audit trail — only that one was set, and by whom.
+  await audit(`dashboard:${scope.email}`, "dash_manager_pin", shopId, { args: [] });
+  revalidatePath("/settings");
+  return { ok: true, message: "Manager PIN saved. Over-limit actions now ask for it." };
 }
 
 export async function setNegotiation(shopId: string, enabled: boolean): Promise<ActionResult> {

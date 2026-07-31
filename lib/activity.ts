@@ -45,6 +45,7 @@ const T: Record<string, string> = {
   dash_stock_adj: "adjusted stock of product #{0} by {1}",
   dash_media: "updated media of product #{0} ({1})",
   dash_invoice_identity: "updated the shop's tax invoice details",
+  dash_manager_pin: "set the shop's manager PIN",
   dash_rider_delivery: "set riders to {0} the delivery fee",
   dash_offer_new: "added a {0} offer on product #{1}",
   dash_offer_off: "removed the offer on product #{0}",

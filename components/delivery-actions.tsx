@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { ArrowRight, Bike, Loader2, OctagonX } from "lucide-react";
 import {
   advanceDelivery,
@@ -9,6 +9,7 @@ import {
   type ActionResult,
 } from "@/actions/orders";
 import { Feedback } from "./action-feedback";
+import { PinPrompt } from "./pin-prompt";
 
 const NEXT: Record<string, string> = { confirmed: "packed", packed: "shipped", shipped: "delivered" };
 const ASSIGNABLE = ["confirmed", "packed", "shipped"];
@@ -35,6 +36,7 @@ export function DeliveryActions({
   const [cancelling, setCancelling] = useState(false);
   const [riderId, setRiderId] = useState(currentRiderId ?? "");
   const [pending, startTransition] = useTransition();
+  const sent = useRef<FormData | null>(null);
 
   const next = NEXT[status];
   const canAssign = ASSIGNABLE.includes(status);
@@ -43,6 +45,14 @@ export function DeliveryActions({
 
   const run = (fn: () => Promise<ActionResult>) =>
     startTransition(async () => setResult(await fn()));
+
+  // A large cancel comes back needing a PIN, and React resets the form once its action returns —
+  // so the retry re-sends the FormData that was submitted, remark and all, rather than the empty
+  // fields left on screen.
+  const cancel = (fd: FormData) => {
+    sent.current = fd;
+    run(() => cancelOrder(orderId, fd));
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -106,27 +116,39 @@ export function DeliveryActions({
             Cancel order
           </button>
         ) : (
-          <form action={(fd) => run(() => cancelOrder(orderId, fd))} className="flex gap-2">
-            <input
-              name="remarks"
-              placeholder="Why? (mandatory — owner sees this)"
-              autoFocus
-              className="flex-1 min-w-0 rounded-xl border border-border bg-background px-3 py-2 min-h-11 text-sm"
+          <form action={cancel} className="flex flex-col gap-2">
+            <div className="flex gap-2">
+              <input
+                name="remarks"
+                placeholder="Why? (mandatory — owner sees this)"
+                autoFocus
+                className="flex-1 min-w-0 rounded-xl border border-border bg-background px-3 py-2 min-h-11 text-sm"
+              />
+              <button
+                type="submit"
+                disabled={pending}
+                className="pressable cursor-pointer rounded-xl bg-destructive text-white text-sm font-semibold px-3 min-h-11 disabled:opacity-60"
+              >
+                {pending ? <Loader2 className="size-4 animate-spin" strokeWidth={2} aria-hidden /> : "Cancel it"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setCancelling(false)}
+                className="pressable cursor-pointer rounded-xl border border-border text-sm font-semibold px-3 min-h-11"
+              >
+                Back
+              </button>
+            </div>
+            <PinPrompt
+              result={result}
+              pending={pending}
+              onSubmit={(pin) => {
+                const fd = sent.current;
+                if (!fd) return;
+                fd.set("pin", pin);
+                cancel(fd);
+              }}
             />
-            <button
-              type="submit"
-              disabled={pending}
-              className="pressable cursor-pointer rounded-xl bg-destructive text-white text-sm font-semibold px-3 min-h-11 disabled:opacity-60"
-            >
-              {pending ? <Loader2 className="size-4 animate-spin" strokeWidth={2} aria-hidden /> : "Cancel it"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setCancelling(false)}
-              className="pressable cursor-pointer rounded-xl border border-border text-sm font-semibold px-3 min-h-11"
-            >
-              Back
-            </button>
           </form>
         )
       ) : null}

@@ -1,4 +1,4 @@
-import { Bike, FileText, Handshake, MessageCircle, Settings2, Store } from "lucide-react";
+import { Bike, FileText, Handshake, KeyRound, MessageCircle, Settings2, Store } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { Badge, Card, PageHeader, SectionTitle } from "@/components/ui";
@@ -7,6 +7,7 @@ import { RiderDeliveryToggle } from "@/components/rider-delivery-toggle";
 import { InvoiceIdentityForm } from "@/components/invoice-identity-form";
 import { AssistantPersonaForm } from "@/components/assistant-persona-form";
 import { HaggleAuthorityForm } from "@/components/haggle-authority-form";
+import { ManagerPinForm } from "@/components/manager-pin-form";
 
 interface ShopSettingsRow {
   id: string;
@@ -30,12 +31,20 @@ export default async function SettingsPage() {
 
   // Every shop in scope, not just the switcher pick — settings are per shop.
   // Explicit column list: this table also carries bot tokens, which must never leave the server.
-  const { data } = await db
-    .from("shops")
-    .select("id,name,status,whatsapp_number,negotiation_enabled,rider_keeps_delivery,trn,invoice_name,invoice_address,assistant_name,assistant_gender,assistant_style,haggle_ask_every_time,ai_max_discount_pct")
-    .in("id", scope.shopIds)
-    .order("created_at");
+  // The PIN card is owner-only, so only an owner's page pays for the lookup. Which shops HAVE a PIN
+  // is all that is read — the hash never leaves lib/override.ts.
+  const [{ data }, pinsRes] = await Promise.all([
+    db
+      .from("shops")
+      .select("id,name,status,whatsapp_number,negotiation_enabled,rider_keeps_delivery,trn,invoice_name,invoice_address,assistant_name,assistant_gender,assistant_style,haggle_ask_every_time,ai_max_discount_pct")
+      .in("id", scope.shopIds)
+      .order("created_at"),
+    scope.role === "owner"
+      ? db.from("manager_pins").select("shop_id").in("shop_id", scope.shopIds)
+      : Promise.resolve({ data: [] as { shop_id: string }[] }),
+  ]);
   const shops = (data ?? []) as ShopSettingsRow[];
+  const hasPin = new Set((pinsRes.data ?? []).map((p) => p.shop_id));
 
   return (
     <>
@@ -128,6 +137,20 @@ export default async function SettingsPage() {
                 />
               </div>
             </details>
+            {scope.role === "owner" ? (
+              <details className="rounded-xl bg-muted px-3 py-2.5">
+                <summary className="flex items-center gap-2 cursor-pointer list-none">
+                  <KeyRound className="size-4 text-subtle shrink-0" strokeWidth={2} aria-hidden />
+                  <span className="text-sm font-semibold flex-1">Manager PIN</span>
+                  <Badge tone={hasPin.has(s.id) ? "accent" : "warning"}>
+                    {hasPin.has(s.id) ? "set" : "not set"}
+                  </Badge>
+                </summary>
+                <div className="pt-3">
+                  <ManagerPinForm shopId={s.id} isSet={hasPin.has(s.id)} />
+                </div>
+              </details>
+            ) : null}
           </Card>
         ))}
       </div>

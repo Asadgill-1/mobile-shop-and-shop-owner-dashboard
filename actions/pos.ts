@@ -14,6 +14,7 @@ import { allocateDiscount, vatOnNet } from "@/lib/money";
 import { invoiceRef, paymentRefError, productCode, type InvoiceItem } from "@/lib/types";
 import { issueCreditNote, invoiceForCounterSale } from "@/lib/credit-note";
 import { invoiceIdentityError } from "@/lib/invoice-identity";
+import { aedText, requireOverride, type OverrideNeed } from "@/lib/override";
 import type { ActionResult } from "./orders";
 
 /** FTA: above this a full tax invoice (customer name + address) is required. */
@@ -39,6 +40,8 @@ export interface CheckoutInput {
   customer_trn?: string;
   /** Whole-sale giveaway in AED, ex-VAT. Split across the lines so each records its own share. */
   discount?: number;
+  /** Manager PIN, sent only on the retry after this call came back needsPin (lib/override.ts). */
+  pin?: string;
   lines: CartLine[];
 }
 
@@ -51,6 +54,13 @@ interface LineProduct {
   model: string;
   color: string | null;
   product_number: number | null;
+  // The three the till used to validate a price WITHOUT: unit_price was checked only for
+  // `Number.isFinite && >= 0`, so a 4,000 AED phone rang at 1 AED with discount_amount 0 and never
+  // showed up in the Discounts card. Loaded here so the price itself is gated, not just the
+  // discount, and always read from the database rather than trusted from the cart.
+  selling_price: string;
+  cost_price: string;
+  min_price: string | null;
 }
 
 export async function checkoutSale(input: CheckoutInput): Promise<CheckoutResult> {
@@ -75,7 +85,7 @@ export async function checkoutSale(input: CheckoutInput): Promise<CheckoutResult
   // --- validate lines against real products (tenant-guarded) ---
   const { data: prods } = await db
     .from("products")
-    .select("id,category,brand,model,color,product_number")
+    .select("id,category,brand,model,color,product_number,selling_price,cost_price,min_price")
     .eq("shop_id", shopId)
     .in("id", input.lines.map((l) => l.product_id));
   const byId = new Map<string, LineProduct>((prods ?? []).map((p) => [p.id, p]));
@@ -130,6 +140,46 @@ export async function checkoutSale(input: CheckoutInput): Promise<CheckoutResult
       error: `Sales above AED ${FULL_INVOICE_THRESHOLD.toLocaleString()} need a FULL tax invoice — customer name and address are required (FTA rule).`,
     };
   }
+
+  // --- manager approval, BEFORE anything is written (035) ---
+  // Both loosening directions at the till: what was knocked off the cart, and what each line was
+  // rung at. Every comparison basis comes from the products row just loaded, never from the cart.
+  const gate = await requireOverride(shopId, email, input.pin, (L) => {
+    const needs: OverrideNeed[] = [];
+    const pctLimit = Math.round(gross * L.discount_pct) / 100;
+    if (discount > L.discount_aed || (gross > 0 && discount > pctLimit)) {
+      const pct = gross > 0 ? Math.round((discount / gross) * 1000) / 10 : 0;
+      needs.push({
+        kind: "discount",
+        amount: discount,
+        threshold: Math.min(L.discount_aed, pctLimit),
+        detail: `${aedText(discount)} off a ${aedText(gross)} cart (${pct}%)`,
+        ref: { table: "counter_sales" },
+      });
+    }
+    for (const line of input.lines) {
+      const p = byId.get(line.product_id)!;
+      const [list, cost] = [Number(p.selling_price), Number(p.cost_price)];
+      const floor = p.min_price == null ? null : Number(p.min_price);
+      const at = `${p.brand} ${p.model} at ${aedText(line.unit_price)}`;
+      const ref = { table: "products", id: p.id };
+      // Tightest reason first — one line trips once, however many rules it breaks, or the owner
+      // reads three rows for one phone.
+      if (line.unit_price < cost) {
+        needs.push({ kind: "unit_price", amount: line.unit_price, threshold: cost,
+          detail: `${at} — BELOW COST ${aedText(cost)}`, ref });
+      } else if (floor != null && line.unit_price < floor) {
+        needs.push({ kind: "unit_price", amount: line.unit_price, threshold: floor,
+          detail: `${at} — below the ${aedText(floor)} floor`, ref });
+      } else if (line.unit_price < list * (1 - L.price_below_pct / 100)) {
+        const off = list > 0 ? Math.round(((list - line.unit_price) / list) * 1000) / 10 : 0;
+        needs.push({ kind: "unit_price", amount: line.unit_price, threshold: list,
+          detail: `${at} — ${off}% under the ${aedText(list)} list price`, ref });
+      }
+    }
+    return needs;
+  });
+  if (gate) return gate;
 
   // --- IMEI integrity BEFORE any stock moves: a sold IMEI can't sell twice ---
   let unitRows: { id: string; imei: string; status: string; product_id: string }[] = [];
@@ -268,13 +318,13 @@ export async function checkoutSale(input: CheckoutInput): Promise<CheckoutResult
 }
 
 /** Reverse one sale row: negative counter row + restock + units back to stock. */
-export async function voidSale(counterSaleId: string): Promise<ActionResult> {
+export async function voidSale(counterSaleId: string, pin?: string): Promise<ActionResult> {
   const scope = await getScope();
   const email = `dashboard:${scope.email}`;
 
   const { data: sale } = await db
     .from("counter_sales")
-    .select("id,shop_id,product_id,quantity,sold_price,discount_amount,payment_method,payment_ref")
+    .select("id,shop_id,product_id,quantity,sold_price,discount_amount,payment_method,payment_ref,sold_on")
     .eq("id", counterSaleId)
     .in("shop_id", scope.shopIds)
     .maybeSingle();
@@ -288,6 +338,29 @@ export async function voidSale(counterSaleId: string): Promise<ActionResult> {
     .like("sold_by", `void:${sale.id}%`)
     .limit(1);
   if (existing && existing.length > 0) return { ok: false, error: "Already voided." };
+
+  // What the customer actually handed over — the same figure the POS page prints for the row, so
+  // the threshold reads against the number on screen rather than the ex-VAT revenue behind it.
+  const paid = Math.round(
+    (Number(sale.sold_price) * sale.quantity - Number(sale.discount_amount ?? 0)) * 105,
+  ) / 100;
+  const sameDay = sale.sold_on === dubaiDateISO();
+  const gate = await requireOverride(sale.shop_id, email, pin, (L) =>
+    paid > L.void_aed || !sameDay
+      ? [{
+          kind: "void" as const,
+          amount: paid,
+          threshold: L.void_aed,
+          // Reversing yesterday's sale is the one that moves money across a Z-report, so it is
+          // gated at any value — say which of the two rules bit.
+          detail: sameDay
+            ? `Void ${aedText(paid)} — over the ${aedText(L.void_aed)} limit`
+            : `Void ${aedText(paid)} from ${sale.sold_on} — NOT today's sale`,
+          ref: { table: "counter_sales", id: sale.id },
+        }]
+      : [],
+  );
+  if (gate) return gate;
 
   const { error } = await db.from("counter_sales").insert({
     shop_id: sale.shop_id,
