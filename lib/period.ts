@@ -25,13 +25,20 @@ function day(y: number, m: number, d: number): Date {
   return new Date(Date.UTC(y, m, d) - OFFSET_MS);
 }
 
+/** Does (y, m, d) name a real calendar day? Date.UTC silently rolls 2026-02-31 into March. */
+function realDay(y: number, m: number, d: number): boolean {
+  const t = new Date(Date.UTC(y, m, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m && t.getUTCDate() === d;
+}
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function fmt(y: number, m: number, d: number): string {
   return `${MONTHS[m]} ${String(d).padStart(2, "0")}, ${y}`;
 }
 
-/** today | yesterday | weekly (last 7 Dubai days) | monthly (1st → today) | YYYY-MM-DD. */
+/** today | yesterday | weekly (last 7 Dubai days) | monthly (1st → today) | YYYY-MM-DD |
+ *  YYYY-MM-DD..YYYY-MM-DD (a filing period — both ends inclusive). */
 export function parsePeriod(arg?: string | null, now = new Date()): Period {
   const key = (arg || "today").trim().toLowerCase();
   const { y, m, d } = dubaiToday(now);
@@ -61,6 +68,22 @@ export function parsePeriod(arg?: string | null, now = new Date()): Period {
       label: `This month (${["January","February","March","April","May","June","July","August","September","October","November","December"][m]} ${y})`,
     };
   }
+  // A VAT filing period is a RANGE, and the date an accountant names as its last day belongs
+  // inside it — so `end` is the Dubai midnight AFTER that day, keeping the [start, end) shape every
+  // caller already relies on.
+  const range = /^(\d{4})-(\d{2})-(\d{2})\.\.(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+  if (range) {
+    const [ay, am, ad] = [Number(range[1]), Number(range[2]) - 1, Number(range[3])];
+    const [by, bm, bd] = [Number(range[4]), Number(range[5]) - 1, Number(range[6])];
+    const start = day(ay, am, ad);
+    const end = day(by, bm, bd + 1);
+    // Reject a rolled-over date (2026-02-31) or a backwards range rather than filing a quarter
+    // nobody asked for; falls through to today, same as any other unparseable arg.
+    if (realDay(ay, am, ad) && realDay(by, bm, bd) && end > start) {
+      return { start, end, label: `${fmt(ay, am, ad)} – ${fmt(by, bm, bd)}`, key };
+    }
+  }
+
   const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
   if (parsed) {
     const [py, pm, pd] = [Number(parsed[1]), Number(parsed[2]) - 1, Number(parsed[3])];
