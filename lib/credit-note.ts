@@ -6,7 +6,6 @@
 // NEGATIVE amounts and credit_of set, so every existing `sum(vat_amount)` nets out untouched.
 import "server-only";
 import { db } from "./db";
-import { dubaiDateISO } from "./period";
 import { invoiceRef, type InvoiceItem } from "./types";
 
 export interface CreditNoteResult {
@@ -49,16 +48,6 @@ export async function issueCreditNote(
     .maybeSingle();
   if (existing) return { ok: true, skipped: "already-credited", ref: refOf(existing) };
 
-  const { data: invNo, error: rpcErr } = await db.rpc("next_invoice_number", {
-    p_shop: original.shop_id,
-  });
-  if (rpcErr || !invNo) return { ok: false, error: "Could not allocate a credit note number." };
-  const { data: daySeq } = await db.rpc("next_day_seq", {
-    p_shop: original.shop_id,
-    p_kind: "invoice",
-    p_day: dubaiDateISO(),
-  });
-
   // Line items reverse too, so the printed note reads as the mirror of what it credits.
   const items = ((original.items ?? []) as InvoiceItem[]).map((l) => ({
     ...l,
@@ -66,12 +55,12 @@ export async function issueCreditNote(
     line_total: Number(neg(l.line_total)),
   }));
 
+  // The note continues the shop's sequence, allocated by the BEFORE INSERT trigger (033) inside
+  // this insert — a rejected note used to burn a number and leave an audit gap behind it.
   const { data: note, error } = await db
     .from("invoices")
     .insert({
       shop_id: original.shop_id,
-      invoice_number: invNo,
-      day_seq: daySeq ?? null,
       source: original.source,
       order_id: original.order_id,
       counter_sale_ids: original.counter_sale_ids,

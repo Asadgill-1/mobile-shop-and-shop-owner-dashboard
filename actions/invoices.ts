@@ -8,7 +8,6 @@ import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { audit } from "@/lib/audit";
 import { vatOnNet } from "@/lib/money";
-import { dubaiDateISO } from "@/lib/period";
 import { invoiceRef, type InvoiceItem } from "@/lib/types";
 import { invoiceIdentityError } from "@/lib/invoice-identity";
 import type { ActionResult } from "./orders";
@@ -134,23 +133,12 @@ export async function createInvoiceFromOrder(
   if (deliveryFee > 0) {
     items.push({ desc: "Home delivery", qty: 1, unit_price: deliveryFee, line_total: deliveryFee });
   }
-  const { data: invNo, error: rpcErr } = await db.rpc("next_invoice_number", {
-    p_shop: order.shop_id,
-  });
-  if (rpcErr || !invNo) return { ok: false, error: "Could not allocate an invoice number." };
-  // Date-based display ref (023): per-shop-per-Dubai-day sequence for INV-DD-MM-NNN.
-  const { data: daySeq } = await db.rpc("next_day_seq", {
-    p_shop: order.shop_id,
-    p_kind: "invoice",
-    p_day: dubaiDateISO(),
-  });
-
+  // invoice_number and the INV-DD-MM-NNN day_seq come from the BEFORE INSERT trigger (033), inside
+  // this insert's own transaction. Allocating them here first burned a number on every failure.
   const { data: invoice, error } = await db
     .from("invoices")
     .insert({
       shop_id: order.shop_id,
-      invoice_number: invNo,
-      day_seq: daySeq ?? null,
       source: "order",
       order_id: order.id,
       customer_name: order.customer_name,

@@ -225,18 +225,12 @@ export async function checkoutSale(input: CheckoutInput): Promise<CheckoutResult
       imeis: l.imeis,
     };
   });
-  const { data: invNo } = await db.rpc("next_invoice_number", { p_shop: shopId });
-  const { data: daySeq } = await db.rpc("next_day_seq", {
-    p_shop: shopId,
-    p_kind: "invoice",
-    p_day: dubaiDateISO(),
-  });
+  // invoice_number and day_seq come from the BEFORE INSERT trigger (033), inside this insert's own
+  // transaction. Allocating them here first meant a failed insert burned a number for good.
   const { data: invoice } = await db
     .from("invoices")
     .insert({
       shop_id: shopId,
-      invoice_number: invNo,
-      day_seq: daySeq ?? null,
       source: "counter",
       counter_sale_ids: sales.map((s) => s.id),
       customer_name: customerName,
