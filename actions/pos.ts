@@ -7,6 +7,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { audit } from "@/lib/audit";
+import { moveStock } from "@/lib/stock";
 import { notifyLowStock, shopForNotify } from "@/lib/notify";
 import { dubaiDateISO } from "@/lib/period";
 import { allocateDiscount, vatOnNet } from "@/lib/money";
@@ -144,18 +145,19 @@ export async function checkoutSale(input: CheckoutInput): Promise<CheckoutResult
   }
   const unitByImei = new Map(unitRows.map((u) => [u.imei, u]));
 
-  // --- stock: atomic RPC per line; on failure, restock what already went through ---
+  // --- stock: atomic per line; on failure, restock what already went through ---
   const decremented: { product_id: string; quantity: number }[] = [];
+  const rollback = async () => {
+    for (const d of decremented) {
+      await moveStock(shopId, d.product_id, d.quantity, "rollback", email, { table: "counter_sales" });
+    }
+  };
   for (const line of input.lines) {
-    const { data: ok, error } = await db.rpc("decrement_stock", {
-      p_id: line.product_id,
-      p_shop: shopId,
-      n: line.quantity,
+    const took = await moveStock(shopId, line.product_id, -line.quantity, "sale", email, {
+      table: "counter_sales",
     });
-    if (error || !ok) {
-      for (const d of decremented) {
-        await db.rpc("decrement_stock", { p_id: d.product_id, p_shop: shopId, n: -d.quantity });
-      }
+    if (!took) {
+      await rollback();
       const p = byId.get(line.product_id)!;
       return { ok: false, error: `${p.brand} ${p.model}: not enough stock.` };
     }
@@ -183,9 +185,7 @@ export async function checkoutSale(input: CheckoutInput): Promise<CheckoutResult
     )
     .select("id,product_id");
   if (insErr || !sales) {
-    for (const d of decremented) {
-      await db.rpc("decrement_stock", { p_id: d.product_id, p_shop: shopId, n: -d.quantity });
-    }
+    await rollback();
     return { ok: false, error: "Could not record the sale." };
   }
   const saleIdByProduct = new Map(sales.map((s) => [s.product_id, s.id]));
@@ -308,10 +308,9 @@ export async function voidSale(counterSaleId: string): Promise<ActionResult> {
   });
   if (error) return { ok: false, error: "Could not void the sale." };
 
-  await db.rpc("decrement_stock", {
-    p_id: sale.product_id,
-    p_shop: sale.shop_id,
-    n: -sale.quantity, // negative n restocks
+  await moveStock(sale.shop_id, sale.product_id, sale.quantity, "void", email, {
+    table: "counter_sales",
+    id: sale.id,
   });
   await db
     .from("product_units")

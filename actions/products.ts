@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { audit } from "@/lib/audit";
+import { moveStock } from "@/lib/stock";
 import { notifyLowStock, shopForNotify } from "@/lib/notify";
 import {
   VALID_CATEGORIES,
@@ -142,10 +143,8 @@ export async function addUnits(
     .insert(imeis.map((imei) => ({ shop_id: product.shop_id, product_id: product.id, imei })));
   if (error) return { ok: false, error: "An IMEI in the list already exists in this shop." };
 
-  await db.rpc("decrement_stock", {
-    p_id: product.id,
-    p_shop: product.shop_id,
-    n: -imeis.length, // negative n restocks
+  await moveStock(product.shop_id, product.id, imeis.length, "intake", email, {
+    table: "product_units",
   });
   await audit(email, "dash_stock_adj", product.shop_id, {
     args: [product.product_number, imeis.length],
@@ -289,12 +288,9 @@ export async function adjustStock(productId: string, delta: number): Promise<Act
   const product = await ownProduct(shopIds, productId);
   if (!product) return { ok: false, error: "Product not found." };
 
-  const { data, error } = await db.rpc("decrement_stock", {
-    p_id: product.id,
-    p_shop: product.shop_id,
-    n: -delta, // delta +1 = restock 1 → decrement by −1
-  });
-  if (error || !data) return { ok: false, error: "Stock can't go below 0." };
+  if (!(await moveStock(product.shop_id, product.id, delta, "adjust", email))) {
+    return { ok: false, error: "Stock can't go below 0." };
+  }
   if (delta < 0) {
     const shop = await shopForNotify(product.shop_id);
     if (shop) await notifyLowStock(shop, product.id);
@@ -321,6 +317,21 @@ export async function deleteProduct(productId: string): Promise<ActionResult> {
     return {
       ok: false,
       error: `${count} order(s) reference this product — it can't be deleted. Set stock to 0 instead.`,
+    };
+  }
+
+  // stock_moves.product_id is ON DELETE RESTRICT (034), so the FK would refuse this anyway — say
+  // why instead of surfacing a constraint error. A product that has held stock keeps its history;
+  // only one created at 0 and never stocked has none, and that is the typo this button is for.
+  const { count: moves } = await db
+    .from("stock_moves")
+    .select("id", { count: "exact", head: true })
+    .eq("product_id", product.id);
+  if ((moves ?? 0) > 0) {
+    return {
+      ok: false,
+      error: "This product has stock history and can't be deleted. Set its stock to 0 instead — "
+        + "the movement record has to survive for the books.",
     };
   }
 

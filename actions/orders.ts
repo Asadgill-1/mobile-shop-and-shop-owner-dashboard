@@ -8,6 +8,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { audit } from "@/lib/audit";
+import { moveStock } from "@/lib/stock";
 import {
   notifyCustomer,
   notifyKeepers,
@@ -34,16 +35,6 @@ const ASSIGNABLE = ["confirmed", "packed", "shipped"];
 async function actor(): Promise<{ email: string; shopIds: string[] }> {
   const scope = await getScope();
   return { email: `dashboard:${scope.email}`, shopIds: scope.shopIds };
-}
-
-/** Atomic stock move via the decrement_stock RPC (migration 003). Negative qty restocks. */
-async function decrementStock(shopId: string, productId: string, qty: number): Promise<boolean> {
-  const { data, error } = await db.rpc("decrement_stock", {
-    p_id: productId,
-    p_shop: shopId,
-    n: qty,
-  });
-  return !error && Boolean(data);
 }
 
 async function setStatus(orderId: string, status: string, changedBy: string): Promise<void> {
@@ -99,7 +90,11 @@ interface OfferOutcome {
 /** Load the product's active offer and turn it into the effects to persist on confirm:
  *  auto-discount (best of existing vs offer), zeroed delivery, and a stock-decremented free gift
  *  snapshotted for the invoice. Best-effort on the gift (out of stock → skip, never block confirm). */
-async function applyOfferAtConfirm(draft: DraftRow, fee: number): Promise<OfferOutcome> {
+async function applyOfferAtConfirm(
+  draft: DraftRow,
+  fee: number,
+  actor: string,
+): Promise<OfferOutcome> {
   const base: OfferOutcome = {
     discount: num(draft.discount_amount),
     fee,
@@ -121,8 +116,11 @@ async function applyOfferAtConfirm(draft: DraftRow, fee: number): Promise<OfferO
   let giftText: string | null = null;
 
   if (eff.giftProductId) {
-    // decrement the gift's stock; skip the gift if it's out of stock (confirm still succeeds)
-    const ok = await decrementStock(draft.shop_id, eff.giftProductId, 1);
+    // take the gift's stock; skip the gift if it's out (confirm still succeeds)
+    const ok = await moveStock(draft.shop_id, eff.giftProductId, -1, "gift", actor, {
+      table: "orders",
+      id: draft.id,
+    });
     if (ok) {
       const { data: g } = await db
         .from("products")
@@ -156,14 +154,18 @@ export async function confirmOrder(orderId: string, deliveryFee = 0): Promise<Ac
   if (!draft) return { ok: false, error: "This draft was already decided or doesn't exist." };
   const fee = Number.isFinite(deliveryFee) && deliveryFee > 0 ? deliveryFee : 0;
 
-  if (!(await decrementStock(draft.shop_id, draft.product_id, draft.quantity))) {
+  const took = await moveStock(draft.shop_id, draft.product_id, -draft.quantity, "sale", email, {
+    table: "orders",
+    id: draft.id,
+  });
+  if (!took) {
     return { ok: false, error: "Out of stock — it sold out between draft and confirm." };
   }
   await setStatus(draft.id, "confirmed", email);
 
   // Active offer (023): auto-discount / free delivery / free gift, applied at confirm so the
   // customer's confirmation and the eventual invoice both reflect it.
-  const applied = await applyOfferAtConfirm(draft, fee);
+  const applied = await applyOfferAtConfirm(draft, fee, email);
   const effDiscount = applied.discount;
   const effFee = applied.fee;
   await db
@@ -334,8 +336,11 @@ export async function cancelOrder(orderId: string, formData: FormData): Promise<
   await setStatus(order.id, "cancelled", email);
   await db.from("orders").update({ cancel_remarks: remarks }).eq("id", order.id);
   if (ASSIGNABLE.includes(order.status)) {
-    // stock was decremented at confirm — put it back (negative n increments)
-    await decrementStock(order.shop_id, order.product_id, -order.quantity);
+    // stock was taken at confirm — put it back, as its own journal row
+    await moveStock(order.shop_id, order.product_id, order.quantity, "cancel", email, {
+      table: "orders",
+      id: order.id,
+    });
   }
   // If it was already invoiced, the tax has to be reversed by a credit note — cancelling the order
   // does not un-issue the document (FTA), and every report sums invoices.vat_amount.
