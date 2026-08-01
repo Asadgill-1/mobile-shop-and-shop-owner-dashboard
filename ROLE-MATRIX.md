@@ -233,8 +233,32 @@ Every probe row was deleted afterwards, unlike Phase 3's approvals rows: a fabri
 is a *tax record*, and a claim for input VAT that never happened is not something to leave on a real
 shop's books. The `audit_logs` entries stay — that table is append-only and the entries are true.
 
-Shop 01's `emirate` is therefore **still unset**, on purpose: the PIN is the owner's and was never
-shared with me. Phase 5's return needs it, so it is the one field the owner has to fill themselves.
+### Second run, same day, after the owner set a PIN-approved emirate
+
+Eight bills across three treatments and both claimable states, booked through the form:
+
+| Check | Result |
+|---|---|
+| photo of the bill | uploaded straight to `shop-media` via the signed PUT; the row renders a **Bill** link from a batched `createSignedUrls` |
+| `reverse_charge` + `not claimable` badges | both render; a `standard` claimable bill shows neither |
+| VAT 155.50 on a 3,000 net | booked, warned *"5.50 off 5% of 3000.00 (150.00)"* |
+| VAT **50.02** on a 1,000 net | booked **silently** — a bill that merely rounds must not cry wolf, or the warning gets ignored |
+| duplicate typed `"  gmd-2026-0455 "` | refused |
+| page ↔ CSV ↔ SQL | 8 bills · **12,750.00** net · **595.52** input VAT · **415.52** claimable, identical all three ways |
+| `/logs?view=approvals` | `5 approved · 2 refused`, newest row **"Emirate changed · approved · Emirate (none) → Dubai · owner1@owner.ae · Shop 02"** — and invisible while Shop 01 was the active shop, which is the scoping working |
+
+**Timing finding, fixed here.** React 19 does reset an uncontrolled form after a function action, but
+only once the whole transition settles — and this transition contains a `router.refresh()`. Measured:
+the action returned at ~2.5 s while the transition ran to **7.5 s**, so for five seconds the form
+still showed the previous bill's tick-box and note. The submit button is `disabled` for that entire
+window, so no user could have booked a second bill with stale flags — but anything typed in it would
+have been wiped when the reset finally landed. Both forms now call `formRef.current?.reset()` the
+moment the action returns; re-measured, the fields are clean at 3.9 s and the button re-enables at
+7.5 s. (The one row that *did* inherit stale flags during testing was a script calling
+`requestSubmit()` past the disabled button — not a path the UI offers.)
+
+Shop 01's `emirate` is **still unset**, on purpose: the PIN is the owner's and was never shared with
+me. Phase 5's return needs it, so it is the one field the owner has to fill themselves.
 
 ## What the test pins
 

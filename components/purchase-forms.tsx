@@ -25,14 +25,21 @@ export function SupplierForm({ shopId }: { shopId: string }) {
   const router = useRouter();
   const [result, setResult] = useState<ActionResult | null>(null);
   const [pending, start] = useTransition();
+  const formRef = useRef<HTMLFormElement>(null);
 
   return (
     <form
+      ref={formRef}
       action={(fd) =>
         start(async () => {
           const r = await addSupplier(null, fd);
           setResult(r);
-          if (r.ok) router.refresh();
+          if (r.ok) {
+            // Cleared here, not left to React: its own reset waits for the whole transition, and
+            // this one contains a router.refresh() round trip. See the note in PurchaseForm.
+            formRef.current?.reset();
+            router.refresh();
+          }
         })
       }
       className="flex flex-col gap-2.5"
@@ -84,6 +91,7 @@ export function PurchaseForm({
   // the one where 5% is wrong, and it is also the one where the shop most needs to be believed.
   const vatTouched = useRef(false);
   const scanInput = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
 
   const onSubtotal = (v: string) => {
     setSubtotal(v);
@@ -118,12 +126,19 @@ export function PurchaseForm({
       const r = await bookPurchase(null, fd);
       setResult(r);
       if (r.ok) {
-        // React resets the uncontrolled fields itself; these two are controlled, and the file input
-        // has to be cleared by hand or the next bill silently reuses the last photo.
-        setSubtotal("");
+        // Reset the fields HERE rather than leaving it to React 19.
+        //
+        // React does reset an uncontrolled form after a function action — but only once the whole
+        // transition settles, and this transition contains a router.refresh(), a full RSC round
+        // trip. For the seconds in between, the form still holds the last bill's `recoverable` and
+        // `notes`, and someone booking a stack of bills is typing into it. Caught live on
+        // 2026-08-01: a reverse-charge import inherited the previous bill's "not claimable" and its
+        // note. Under-claiming is the lucky direction; the same race the other way attaches a
+        // claim to a bill the shop had marked ineligible.
+        formRef.current?.reset(); // uncontrolled: number, date, treatment, tick-box, note, photo
+        setSubtotal(""); // controlled: reset() does not touch React state
         setVat("");
         vatTouched.current = false;
-        if (scanInput.current) scanInput.current.value = "";
         router.refresh();
       }
     });
@@ -135,7 +150,7 @@ export function PurchaseForm({
   }
 
   return (
-    <form action={submit} className="flex flex-col gap-2.5">
+    <form ref={formRef} action={submit} className="flex flex-col gap-2.5">
       <input type="hidden" name="shop_id" value={shopId} />
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
         <label className="flex flex-col gap-1">
