@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { assertShop, getScope } from "@/lib/scope";
 import { audit } from "@/lib/audit";
 import { newPinRow, requireOverride } from "@/lib/override";
+import { EMIRATES } from "@/lib/vat";
 import type { ActionResult } from "./orders";
 
 /** Invoice identity printed on every tax invoice (migration 022): TRN, legal name, address. */
@@ -56,6 +57,62 @@ export async function setInvoiceIdentity(
   await audit(`dashboard:${scope.email}`, "dash_invoice_identity", shopId, { args: [] });
   revalidatePath("/settings");
   return { ok: true, message: "Invoice details saved." };
+}
+
+/** The shop's own VAT facts (migration 036): which emirate it supplies from, and how often it files.
+ *
+ *  The emirate is gated like the TRN and for the same reason: standard-rated supplies are reported
+ *  per emirate (VAT201 boxes 1a–1g), so changing it re-files every sale in the period under a
+ *  different heading. It is set once at onboarding and then never — which is exactly why a change
+ *  should have to be approved. The filing frequency only picks a report's default dates, so it is
+ *  free to change.
+ */
+export async function setVatProfile(
+  _prev: ActionResult | null,
+  formData: FormData,
+): Promise<ActionResult> {
+  const scope = await getScope();
+  const shopId = String(formData.get("shop_id") ?? "");
+  assertShop(scope, shopId);
+
+  const emirate = String(formData.get("emirate") ?? "").trim();
+  if (emirate && !(EMIRATES as readonly string[]).includes(emirate)) {
+    return { ok: false, error: "Pick an emirate from the list." };
+  }
+  const vatPeriod = String(formData.get("vat_period") ?? "");
+  if (vatPeriod !== "monthly" && vatPeriod !== "quarterly") {
+    return { ok: false, error: "Pick monthly or quarterly." };
+  }
+  const anchor = Number(formData.get("vat_quarter_anchor") ?? 3);
+  if (![1, 2, 3].includes(anchor)) return { ok: false, error: "Pick which months the quarter ends." };
+
+  const { data: current } = await db.from("shops").select("emirate").eq("id", shopId).maybeSingle();
+  const wasEmirate = current?.emirate ?? "";
+  const gate = await requireOverride(
+    shopId,
+    `dashboard:${scope.email}`,
+    String(formData.get("pin") ?? ""),
+    () =>
+      emirate === wasEmirate
+        ? []
+        : [{
+            kind: "emirate" as const,
+            detail: `Emirate ${wasEmirate || "(none)"} → ${emirate || "(none)"}`,
+            ref: { table: "shops", id: shopId },
+          }],
+  );
+  if (gate) return gate;
+
+  const { error } = await db
+    .from("shops")
+    .update({ emirate: emirate || null, vat_period: vatPeriod, vat_quarter_anchor: anchor })
+    .eq("id", shopId);
+  if (error) return { ok: false, error: "Could not save the VAT details." };
+  await audit(`dashboard:${scope.email}`, "dash_vat_profile", shopId, {
+    args: [emirate || "no emirate", vatPeriod],
+  });
+  revalidatePath("/settings");
+  return { ok: true, message: "VAT details saved." };
 }
 
 /**

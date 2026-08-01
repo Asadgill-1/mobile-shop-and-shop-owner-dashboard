@@ -14,6 +14,7 @@ import {
   ChartColumn,
   ScrollText,
   Settings,
+  ShoppingBag,
   Menu,
   X,
   LogOut,
@@ -36,6 +37,7 @@ function items(draftCount: number, escalationCount: number, isOwner: boolean): I
     { href: "/inventory", label: "Inventory", icon: Package },
     { href: "/pos", label: "POS", icon: Calculator },
     { href: "/invoices", label: "Invoices", icon: FileText },
+    { href: "/purchases", label: "Purchases", icon: ShoppingBag },
     { href: "/chats", label: "Chats", icon: MessageSquare, badge: escalationCount },
     { href: "/riders", label: "Riders & COD", icon: Bike },
     { href: "/reports", label: "Reports", icon: ChartColumn },
@@ -74,7 +76,7 @@ export function Nav({
   const [moreOpen, setMoreOpen] = useState(false);
   const all = items(draftCount, escalationCount, isOwner);
   const bottom = all.slice(0, 4); // Home · Orders · Inventory · POS
-  const more = all.slice(4); //     Chats · Riders · Reports · Settings
+  const more = all.slice(4); //     Invoices · Purchases · Chats · Riders · Reports · Settings
   const moreBadge = more.reduce((n, item) => n + (item.badge ?? 0), 0);
 
   return (

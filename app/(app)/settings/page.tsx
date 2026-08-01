@@ -1,4 +1,4 @@
-import { Bike, FileText, Handshake, KeyRound, MessageCircle, Settings2, Store } from "lucide-react";
+import { Bike, FileText, Handshake, KeyRound, Landmark, MessageCircle, Settings2, Store } from "lucide-react";
 import { db } from "@/lib/db";
 import { getScope } from "@/lib/scope";
 import { Badge, Card, PageHeader, SectionTitle } from "@/components/ui";
@@ -8,6 +8,7 @@ import { InvoiceIdentityForm } from "@/components/invoice-identity-form";
 import { AssistantPersonaForm } from "@/components/assistant-persona-form";
 import { HaggleAuthorityForm } from "@/components/haggle-authority-form";
 import { ManagerPinForm } from "@/components/manager-pin-form";
+import { VatProfileForm } from "@/components/vat-profile-form";
 
 interface ShopSettingsRow {
   id: string;
@@ -24,6 +25,9 @@ interface ShopSettingsRow {
   assistant_style: string | null;
   haggle_ask_every_time: boolean;
   ai_max_discount_pct: number | string | null;
+  emirate: string | null;
+  vat_period: string;
+  vat_quarter_anchor: number;
 }
 
 export default async function SettingsPage() {
@@ -36,7 +40,7 @@ export default async function SettingsPage() {
   const [{ data }, pinsRes] = await Promise.all([
     db
       .from("shops")
-      .select("id,name,status,whatsapp_number,negotiation_enabled,rider_keeps_delivery,trn,invoice_name,invoice_address,assistant_name,assistant_gender,assistant_style,haggle_ask_every_time,ai_max_discount_pct")
+      .select("id,name,status,whatsapp_number,negotiation_enabled,rider_keeps_delivery,trn,invoice_name,invoice_address,assistant_name,assistant_gender,assistant_style,haggle_ask_every_time,ai_max_discount_pct,emirate,vat_period,vat_quarter_anchor")
       .in("id", scope.shopIds)
       .order("created_at"),
     scope.role === "owner"
@@ -134,6 +138,25 @@ export default async function SettingsPage() {
                   trn={s.trn}
                   name={s.invoice_name}
                   address={s.invoice_address}
+                />
+              </div>
+            </details>
+            <details className="rounded-xl bg-muted px-3 py-2.5" open={!s.emirate}>
+              <summary className="flex items-center gap-2 cursor-pointer list-none">
+                <Landmark className="size-4 text-subtle shrink-0" strokeWidth={2} aria-hidden />
+                <span className="text-sm font-semibold flex-1">VAT return details</span>
+                {s.emirate ? (
+                  <Badge tone="accent">{s.emirate}</Badge>
+                ) : (
+                  <Badge tone="warning">emirate missing</Badge>
+                )}
+              </summary>
+              <div className="pt-3">
+                <VatProfileForm
+                  shopId={s.id}
+                  emirate={s.emirate}
+                  vatPeriod={s.vat_period}
+                  quarterAnchor={s.vat_quarter_anchor}
                 />
               </div>
             </details>

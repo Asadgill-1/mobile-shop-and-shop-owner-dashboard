@@ -42,7 +42,8 @@ export type OverrideKind =
   | "product_delete" // always
   | "cost_edit" // always — cost is the denominator of every margin figure
   | "price_cut" // selling_price cut
-  | "trn"; // always — it prints on every tax invoice
+  | "trn" // always — it prints on every tax invoice
+  | "emirate"; // always — it decides which VAT201 box the period's supplies land in (036)
 
 export interface OverrideNeed {
   kind: OverrideKind;

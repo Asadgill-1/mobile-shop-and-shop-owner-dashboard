@@ -55,6 +55,7 @@ const KIND_LABEL: Record<string, string> = {
   cost_edit: "Cost price edited",
   price_cut: "Selling price cut",
   trn: "TRN changed",
+  emirate: "Emirate changed",
 };
 
 /** The unit follows `kind` (035): whole units for a stock correction, percent for a price cut, AED

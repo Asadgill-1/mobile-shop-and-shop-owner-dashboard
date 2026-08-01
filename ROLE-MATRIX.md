@@ -58,6 +58,9 @@ there is a scope). No action asks *who* is calling.
 | `/invoices`, `/invoices/[id]` | allowed | allowed | allowed (aggregated) | no gate |
 | `/invoices/export` | allowed | allowed | allowed | no gate |
 | `/pos` | allowed | allowed | **denied** — "Pick a shop first" | `pos/page.tsx:15` |
+| `/purchases` register | allowed | allowed | allowed (aggregated) | no gate |
+| `/purchases` → booking form | allowed | allowed | **degraded** — register still shows, "Pick a shop to book a bill" | `purchases/page.tsx:41` |
+| `/purchases/export` | allowed | allowed | allowed | no gate |
 | `/reports` | allowed | allowed | allowed | no gate |
 | `/reports` → "By shop" table | **absent** | absent | present **only when ≥2 shops traded** ² | `reports/page.tsx:203` |
 | `/reports/sales` | allowed | allowed | allowed (aggregated) | no gate |
@@ -106,6 +109,12 @@ a restock and a small cancel are all still one tap.
 | `cost_price` edit | always | `actions/products.ts::updateProduct` |
 | `selling_price` cut | > 15% below the current price (raising never asks) | same |
 | TRN change | always, and only when it actually changes | `actions/settings.ts::setInvoiceIdentity` |
+| Emirate change (036) | always, and only when it actually changes | `actions/settings.ts::setVatProfile` |
+
+Booking a supplier bill is **not** gated, and that is the same principle upside down: it is money
+*out*, it is the paper the shop was handed, and a till that asks permission to file its bills does
+not get its bills filed. What protects that side is the unique index — the same document cannot be
+claimed twice however it is typed.
 
 **No PIN set = nothing blocked.** The action goes through and logs `outcome='unset'`, so the owner's
 first look at the Approvals view is a priced list of what has been happening unsupervised. Five wrong
@@ -201,6 +210,31 @@ Fixed here: the Approvals view printed `limit AED 5` against `stock_adjust`, who
 **units**. `limitText()` now follows `kind` — units for a stock correction, percent for a price cut,
 AED otherwise. The CSV keeps raw numbers, which is right for a spreadsheet, and its `Kind` column
 says which is which.
+
+## Live run, 2026-08-01 — purchases and the VAT profile (036)
+
+`owner1@owner.ae` with Shop 01 — Dubai Marina active. Every row below was driven through the real
+server actions in the browser, not through SQL.
+
+| Check | Result |
+|---|---|
+| `addSupplier` | "ZZ Probe Trading added." |
+| the same name as `"  zz probe TRADING  "` | refused — *"already a supplier here"*. The unique index is on `lower(btrim(name))`, so one supplier cannot become two accounts. |
+| VAT auto-fill | typing a 1,000 net filled VAT as `50.00`; typing over it stops the auto-fill for good |
+| `bookPurchase` INV-7001 (1000 / 50) | booked, **no warning** — 50 is exactly 5% |
+| the same bill as `"  inv-7001 "` | refused — *"already booked — claiming it twice is what the FTA looks for"* |
+| INV-7002 (1000 / **100**) | **booked**, with *"VAT 100.00 is 50.00 off 5% of 1000.00 (50.00). Booked as entered — check the bill."* A warning is not a refusal. |
+| cards ↔ register ↔ CSV | AED 2,000.00 net · AED 150.00 input VAT · AED 150.00 claimable, agreeing to the fil across all three |
+| filing period monthly → quarterly | saved with **no prompt** — a display default is not a tax figure |
+| emirate (none) → Dubai | **"Manager PIN required — Emirate (none) → Dubai."**, nothing written, and **no `override_approvals` row** — 035's rule that a prompt appearing is not a decision holds for the new kind |
+| `/purchases` for an owner on "All shops" | register aggregates, booking form replaced by "Pick a shop to book a bill" |
+
+Every probe row was deleted afterwards, unlike Phase 3's approvals rows: a fabricated supplier bill
+is a *tax record*, and a claim for input VAT that never happened is not something to leave on a real
+shop's books. The `audit_logs` entries stay — that table is append-only and the entries are true.
+
+Shop 01's `emirate` is therefore **still unset**, on purpose: the PIN is the owner's and was never
+shared with me. Phase 5's return needs it, so it is the one field the owner has to fill themselves.
 
 ## What the test pins
 
