@@ -57,6 +57,14 @@ const KIND_LABEL: Record<string, string> = {
   trn: "TRN changed",
 };
 
+/** The unit follows `kind` (035): whole units for a stock correction, percent for a price cut, AED
+ *  for everything else. "AED 5" against a 5-unit limit reads as five dirhams. */
+function limitText(kind: string, threshold: number): string {
+  if (kind === "stock_adjust") return `${threshold} units`;
+  if (kind === "price_cut") return `${threshold}%`;
+  return aed(threshold);
+}
+
 const OUTCOME: Record<string, { tone: "accent" | "destructive" | "warning" | "neutral"; label: string }> = {
   approved: { tone: "accent", label: "approved" },
   refused: { tone: "destructive", label: "wrong PIN" },
@@ -369,7 +377,7 @@ async function Approvals({
                     <Badge tone={o.tone}>{o.label}</Badge>
                     {r.amount != null && r.threshold != null ? (
                       <span className="text-xs text-subtle tabular">
-                        limit {aed(Number(r.threshold))}
+                        limit {limitText(r.kind, Number(r.threshold))}
                       </span>
                     ) : null}
                   </div>

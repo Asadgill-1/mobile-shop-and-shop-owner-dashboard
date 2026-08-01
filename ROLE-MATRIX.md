@@ -111,6 +111,11 @@ a restock and a small cancel are all still one tap.
 first look at the Approvals view is a priced list of what has been happening unsupervised. Five wrong
 PINs lock the shop's row with an exponential backoff; setting a new PIN clears it.
 
+**The PIN is the shop's, not a role gate — it stops the owner too.** Confirmed live on 2026-08-01
+under `owner1@owner.ae`: a +1 stock adjust on a 2,600 AED phone raised the same prompt it raises for
+a keeper. That is deliberate (the owner knows the PIN, so it costs them one field) and it is what
+makes the approvals log honest — otherwise "approved" would only ever mean "a keeper did it".
+
 ## Open questions for the owner (decision D0)
 
 Each of these is a real difference the matrix turned up. Only you can say which side is right.
@@ -179,6 +184,23 @@ Found and fixed during that run: React 19 resets an uncontrolled form once its a
 PIN carried as a form *field* would have re-sent the **original** values — on the TRN that is a
 silent no-op (nothing differs, so nothing is gated, so nothing changes). Every form caller now uses
 `usePinRetry`, which replays the FormData that was actually submitted.
+
+## Live run, 2026-08-01 — the owner half
+
+`owner1@owner.ae` on "All shops".
+
+| Check | Result |
+|---|---|
+| Manager PIN card on `/settings` | present on **both** shops (absent for the keeper) ✓ |
+| `setManagerPin` | the owner set a PIN on each shop through the UI — two `manager_pins` rows, `set_by dashboard:owner1@owner.ae`. The supabase-js upsert path works. |
+| `/logs?view=approvals` | all 6 rows, correct labels and badges, `4 APPROVED · 2 REFUSED` |
+| `/logs/export?view=approvals` | 200, BOM, 6 rows, `Kind` column disambiguates the units |
+| the owner's own +1 stock adjust | **also gated** — same prompt, stock unchanged, nothing logged |
+
+Fixed here: the Approvals view printed `limit AED 5` against `stock_adjust`, whose threshold is 5
+**units**. `limitText()` now follows `kind` — units for a stock correction, percent for a price cut,
+AED otherwise. The CSV keeps raw numbers, which is right for a spreadsheet, and its `Kind` column
+says which is which.
 
 ## What the test pins
 
